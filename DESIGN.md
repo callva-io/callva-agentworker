@@ -90,7 +90,7 @@ A structured answer is requested through the engine's native flag. When a schema
 
 `quota`: the subscription or rate limit is spent; the turn can be retried later without changing anything. `model_refused`: the engine will not run this model; retrying changes nothing. `not_authenticated`: no login or an invalid key. `timeout`: the deadline passed and the tree was killed. `cancelled`: the caller's event was set. `binary_missing`: no engine found. `max_turns`, `budget`: the engine ended the turn on its own limit. `invalid_output`: a schema was required and nothing parsed. `error`: the engine reported a failure this table does not name; the sentence is in `message`. `crash`: the process exited non-zero without a report, or exited zero with no report at all.
 
-Classification reads the engine's sentence in a fixed order: quota before model refusal, because a spent subscription on one model says both, and only one of them is a pause.
+Classification reads the engine's own limit verdicts first (`error_max_turns`, the budget subtype), then an HTTP status the engine reports for a provider error (`api_error_status` on claude: 429 is `quota`, 401 is `not_authenticated`), then the sentence, in a fixed order: quota before model refusal, because a spent subscription on one model says both, and only one of them is a pause.
 
 ## 11. Constraints worth knowing
 

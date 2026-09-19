@@ -56,6 +56,8 @@ if mode == "quota":
     doc.update({"is_error": True, "result": "You've hit your usage limit. Your limit will reset at 3pm."})
 elif mode == "max_turns":
     doc.update({"subtype": "error_max_turns", "is_error": True, "result": ""})
+elif mode == "api429":
+    doc.update({"is_error": True, "result": "API Error", "api_error_status": 429})
 elif mode == "auth":
     doc.update({"is_error": True, "result": "Not logged in. Please run /login."})
 elif mode == "structured":

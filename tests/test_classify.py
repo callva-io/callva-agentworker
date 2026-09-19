@@ -18,6 +18,12 @@ def test_model_refused_and_auth():
     assert classify("Invalid API key · Fix external API key") == FailureKind.NOT_AUTHENTICATED
 
 
+def test_http_status_before_sentence():
+    assert classify("API Error", http_status=429) == FailureKind.QUOTA
+    assert classify("API Error", http_status=401) == FailureKind.NOT_AUTHENTICATED
+    assert classify("API Error", http_status=500) == FailureKind.ERROR
+
+
 def test_subtypes_flags_and_fallbacks():
     assert classify("", subtype="error_max_turns") == FailureKind.MAX_TURNS
     assert classify("", subtype="error_max_budget_usd") == FailureKind.BUDGET

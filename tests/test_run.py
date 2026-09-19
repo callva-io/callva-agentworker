@@ -43,6 +43,13 @@ def test_claude_quota_auth_max_turns(fake_env, tmp_path):
                                 environ={**fake_env, "FAKE_CLAUDE": "quota"}).failure.message
 
 
+def test_claude_api_status_without_phrase_is_quota(fake_env, tmp_path):
+    result = run("x", Profile(engine="claude"), cwd=tmp_path,
+                 environ={**fake_env, "FAKE_CLAUDE": "api429"})
+    assert result.failure.kind == FailureKind.QUOTA
+    assert result.failure.message == "API error 429: API Error"
+
+
 def test_claude_crash_and_missing_binary(fake_env, tmp_path):
     result = run("x", Profile(engine="claude"), cwd=tmp_path,
                  environ={**fake_env, "FAKE_CLAUDE": "crash"})

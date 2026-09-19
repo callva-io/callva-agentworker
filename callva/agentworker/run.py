@@ -150,8 +150,11 @@ def _run_claude(prompt, profile, cwd, binary, env, session, schema, prompt_via,
         return Result(ok=False, failure=Failure(kind, message), **common)
     ok = fields["subtype"] == "success" and not fields["is_error"]
     if not ok:
+        status = fields.get("api_error_status")
         message = fields["answer"].strip() or done.stderr_tail.strip() or f"exit {done.exit_code}"
-        kind = classify(message, subtype=fields["subtype"])
+        if status is not None and str(status) not in message:
+            message = f"API error {status}: {message}"
+        kind = classify(message, subtype=fields["subtype"], http_status=status)
         return Result(ok=False, failure=Failure(kind, message), **common)
     structured = None
     if schema:

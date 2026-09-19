@@ -36,6 +36,8 @@ NOT_AUTHENTICATED_RE = re.compile(
     re.IGNORECASE,
 )
 
+STATUS_KINDS = {429: FailureKind.QUOTA, 401: FailureKind.NOT_AUTHENTICATED}
+
 SUBTYPE_KINDS = {
     "error_max_turns": FailureKind.MAX_TURNS,
     "error_max_budget_usd": FailureKind.BUDGET,
@@ -91,15 +93,18 @@ def classify(
     message: str | None,
     *,
     subtype: str | None = None,
+    http_status: int | None = None,
     timed_out: bool = False,
     cancelled: bool = False,
     had_report: bool = True,
 ) -> FailureKind:
     """Name the kind of a failure from what is known about it.
 
-    `had_report` is false when the process ended without the engine's own
-    result document, which is the one case where nothing the engine said can
-    be read and the kind is `crash`.
+    `http_status` is the status the engine reports for a provider error, when
+    it reports one; it is read before the sentence, because a 429 with a
+    phrase-free message is still a spent quota. `had_report` is false when the
+    process ended without the engine's own result document, which is the one
+    case where nothing the engine said can be read and the kind is `crash`.
     """
     if cancelled:
         return FailureKind.CANCELLED
@@ -107,6 +112,8 @@ def classify(
         return FailureKind.TIMEOUT
     if subtype in SUBTYPE_KINDS:
         return SUBTYPE_KINDS[subtype]
+    if http_status in STATUS_KINDS:
+        return STATUS_KINDS[http_status]
     if is_quota(message):
         return FailureKind.QUOTA
     if is_model_refused(message):

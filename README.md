@@ -74,7 +74,7 @@ profile = Profile.from_dict({
 
 ### Failure kinds
 
-`quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`. A spent quota is read before a refused model, because a subscription spent on one model says both and only one of them is a pause. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
+`quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`. An HTTP status the engine reports is read before its sentence, and a spent quota before a refused model, because a subscription spent on one model says both and only one of them is a pause. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
 
 ### Progress and cancel
 

@@ -182,4 +182,5 @@ def read(doc: dict) -> dict[str, Any]:
         "permission_denials": tuple(doc.get("permission_denials") or ()),
         "subtype": doc.get("subtype"),
         "is_error": bool(doc.get("is_error")),
+        "api_error_status": doc.get("api_error_status"),
     }
