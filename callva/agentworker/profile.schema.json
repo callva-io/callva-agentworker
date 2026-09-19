@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/callva-io/callva-agentworker/profile.schema.json",
+  "title": "callva-agentworker profile",
+  "description": "How one headless engine turn is run. Consumers keep profiles in their own configuration and validate them against this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engine"],
+  "properties": {
+    "engine": {"type": "string", "enum": ["claude", "codex"]},
+    "fence": {"type": "string", "enum": ["read", "write", "act"], "default": "read"},
+    "model": {"type": ["string", "null"], "default": null},
+    "effort": {"type": ["string", "null"], "default": null},
+    "service_tier": {"type": ["string", "null"], "default": null},
+    "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 600},
+    "budget_usd": {"type": ["number", "null"], "exclusiveMinimum": 0, "default": null},
+    "allow_tools": {"type": "array", "items": {"type": "string"}, "default": []},
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},
+        "deny": {"type": "array", "items": {"type": "string"}},
+        "set": {"type": "object", "additionalProperties": {"type": "string"}, "default": {}}
+      }
+    },
+    "extra_args": {"type": "array", "items": {"type": "string"}, "default": []}
+  }
+}

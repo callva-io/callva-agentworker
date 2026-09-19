@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""A fake `codex exec` for the suite. Behaviour is chosen by FAKE_CODEX."""
+import json
+import os
+import subprocess
+import sys
+import time
+
+argv = sys.argv[1:]
+mode = os.environ.get("FAKE_CODEX", "success")
+record = os.environ.get("FAKE_ARGV_FILE")
+if record:
+    with open(record, "w") as fh:
+        json.dump(argv, fh)
+
+if argv[:2] == ["exec", "--help"]:
+    extra = " --dangerously-bypass-hook-trust" if os.environ.get("FAKE_CODEX_HOOKTRUST") else ""
+    print("Usage: codex exec [OPTIONS] [PROMPT]\n  --json  -o <FILE>" + extra)
+    sys.exit(0)
+if argv == ["--version"]:
+    print("codex-cli 0.0.0-fake")
+    sys.exit(0)
+
+positional = [a for a in argv[1:] if not a.startswith("-") and a not in ("resume",)]
+# after "exec" and an optional "resume <id>", the first positional is the prompt or "-"
+tail = argv[1:]
+resume_id = None
+if tail and tail[0] == "resume":
+    resume_id = tail[1]
+    tail = tail[2:]
+prompt_arg = tail[0]
+prompt = sys.stdin.read() if prompt_arg == "-" else prompt_arg
+out_file = argv[argv.index("-o") + 1] if "-o" in argv else None
+sys.stderr.write("Reading additional input from stdin...\n")
+
+if mode == "hang":
+    child = subprocess.Popen(["sleep", "300"])
+    pid_file = os.environ.get("FAKE_PID_FILE")
+    if pid_file:
+        with open(pid_file, "w") as fh:
+            fh.write(str(child.pid))
+    time.sleep(300)
+
+
+def emit(event):
+    sys.stdout.write(json.dumps(event) + "\n")
+    sys.stdout.flush()
+
+
+thread_id = resume_id or "thread-fake-1"
+emit({"type": "thread.started", "thread_id": thread_id})
+if mode == "quota":
+    emit({"type": "turn.failed", "error": {"message": json.dumps(
+        {"error": {"message": "Rate limit reached for gpt-fake: too many requests", "code": "rate_limit_exceeded"}})}})
+    sys.exit(1)
+if mode == "crash":
+    sys.stderr.write("thread 'main' panicked at something\n")
+    sys.exit(101)
+answer = f"codex answer to: {prompt.strip()}"
+if mode == "structured":
+    answer = json.dumps({"verdict": "ok"})
+emit({"type": "item.completed", "item": {"type": "agent_message", "text": answer}})
+emit({"type": "turn.completed", "usage": {"input_tokens": 300, "cached_input_tokens": 100, "output_tokens": 40}})
+if out_file and mode != "no_file":
+    with open(out_file, "w") as fh:
+        fh.write(answer + "\n")

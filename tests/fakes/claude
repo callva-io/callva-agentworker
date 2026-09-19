@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""A fake `claude -p` for the suite. Behaviour is chosen by FAKE_CLAUDE."""
+import json
+import os
+import subprocess
+import sys
+import time
+
+argv = sys.argv[1:]
+mode = os.environ.get("FAKE_CLAUDE", "success")
+record = os.environ.get("FAKE_ARGV_FILE")
+if record:
+    with open(record, "w") as fh:
+        json.dump(argv, fh)
+
+
+def arg_after(flag):
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+after_p = argv[argv.index("-p") + 1:argv.index("-p") + 2]
+if after_p and not after_p[0].startswith("--"):
+    prompt = after_p[0]
+else:
+    prompt = sys.stdin.read()
+session_id = arg_after("--session-id") or arg_after("--resume") or "learned-session"
+output_format = arg_after("--output-format") or "json"
+
+if mode == "hang":
+    child = subprocess.Popen(["sleep", "300"])
+    pid_file = os.environ.get("FAKE_PID_FILE")
+    if pid_file:
+        with open(pid_file, "w") as fh:
+            fh.write(str(child.pid))
+    time.sleep(300)
+
+if mode == "crash":
+    sys.stderr.write("Error: unknown option --frobnicate\n")
+    sys.exit(2)
+
+doc = {
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "result": f"answer to: {prompt.strip()}",
+    "session_id": session_id,
+    "total_cost_usd": 0.0123,
+    "duration_ms": 1234,
+    "num_turns": 3,
+    "usage": {"input_tokens": 100, "output_tokens": 20,
+              "cache_read_input_tokens": 50, "cache_creation_input_tokens": 5},
+    "modelUsage": {"claude-fake-1": {"outputTokens": 20}},
+    "permission_denials": [],
+}
+if mode == "quota":
+    doc.update({"is_error": True, "result": "You've hit your usage limit. Your limit will reset at 3pm."})
+elif mode == "max_turns":
+    doc.update({"subtype": "error_max_turns", "is_error": True, "result": ""})
+elif mode == "auth":
+    doc.update({"is_error": True, "result": "Not logged in. Please run /login."})
+elif mode == "structured":
+    schema = arg_after("--json-schema")
+    doc["structured_output"] = {"verdict": "ok", "schema_seen": schema is not None}
+elif mode == "prose_under_schema":
+    doc["result"] = "just prose"
+
+if output_format == "stream-json":
+    for event in ({"type": "system", "subtype": "init", "session_id": session_id},
+                  {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking"}]}}):
+        sys.stdout.write(json.dumps(event) + "\n")
+        sys.stdout.flush()
+# A hook printing its own document before and after the result, one of them pretty.
+sys.stdout.write(json.dumps({"hook": "before", "note": "noise"}) + "\n")
+sys.stdout.write(json.dumps(doc) + "\n")
+sys.stdout.write(json.dumps({"hook": "after", "nested": {"a": [1, 2]}}, indent=2) + "\n")
+sys.stdout.flush()
