@@ -89,11 +89,13 @@ class Profile:
     timeout_seconds: float = 600.0
     budget_usd: float | None = None
     allow_tools: tuple[str, ...] = ()
+    add_dirs: tuple[str, ...] = ()
     env: EnvPolicy = field(default_factory=EnvPolicy)
     extra_args: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "allow_tools", tuple(self.allow_tools))
+        object.__setattr__(self, "add_dirs", tuple(str(d) for d in self.add_dirs))
         object.__setattr__(self, "extra_args", tuple(self.extra_args))
         if isinstance(self.env, Mapping):
             object.__setattr__(self, "env", EnvPolicy.from_dict(self.env))
@@ -109,6 +111,7 @@ class Profile:
             "timeout_seconds": self.timeout_seconds,
             "budget_usd": self.budget_usd,
             "allow_tools": list(self.allow_tools),
+            "add_dirs": list(self.add_dirs),
             "env": self.env.to_dict(),
             "extra_args": list(self.extra_args),
         }
@@ -126,6 +129,7 @@ class Profile:
             timeout_seconds=float(data.get("timeout_seconds", 600.0)),
             budget_usd=data.get("budget_usd"),
             allow_tools=tuple(data.get("allow_tools", ())),
+            add_dirs=tuple(data.get("add_dirs", ())),
             env=EnvPolicy.from_dict(data.get("env")),
             extra_args=tuple(data.get("extra_args", ())),
         )

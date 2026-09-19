@@ -56,11 +56,12 @@ profile = Profile.from_dict({
 | Field | Meaning |
 |---|---|
 | `engine` | `claude` or `codex` |
-| `fence` | `read`, `write` or `act`; enforced by the engine, never by the prompt |
+| `fence` | `read`, `write` or `act`; enforced by the engine, never by the prompt, and independent of the machine's own settings files |
 | `model`, `effort`, `service_tier` | passed through; `None` leaves the engine's default |
 | `timeout_seconds` | the deadline; the whole process tree is killed when it passes |
 | `budget_usd` | claude only |
 | `allow_tools` | extra tool patterns a fenced turn may use, such as `Bash(tasks:*)` |
+| `add_dirs` | directories beyond the working directory a fenced turn's file tools may reach |
 | `env` | which inherited variables reach the engine: `allow`, `deny`, `set` |
 | `extra_args` | appended verbatim; the escape hatch |
 

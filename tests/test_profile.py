@@ -5,11 +5,11 @@ from callva.agentworker import DEFAULT_DENY, EnvPolicy, Profile, ProfileError, S
 
 def test_from_dict_roundtrip():
     data = {"engine": "codex", "fence": "act", "model": "gpt-x", "effort": "high",
-            "timeout_seconds": 30, "allow_tools": ["Bash(tasks:*)"],
+            "timeout_seconds": 30, "allow_tools": ["Bash(tasks:*)"], "add_dirs": ["/srv/x"],
             "env": {"deny": ["SECRET_*"], "set": {"A": "1"}}, "extra_args": ["--flag"]}
     profile = Profile.from_dict(data)
     assert profile.engine == "codex" and profile.fence == "act"
-    assert profile.allow_tools == ("Bash(tasks:*)",)
+    assert profile.allow_tools == ("Bash(tasks:*)",) and profile.add_dirs == ("/srv/x",)
     assert profile.env.deny == ("SECRET_*",) and profile.env.set == {"A": "1"}
     again = Profile.from_dict(profile.to_dict())
     assert again == profile

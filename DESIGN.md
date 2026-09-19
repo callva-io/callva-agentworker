@@ -32,6 +32,7 @@ A `Profile` is a frozen record of how one engine is run. Its fields and their me
 | `timeout_seconds` | the deadline; the whole process tree is killed when it passes. |
 | `budget_usd` | claude only; the engine ends the turn when its own estimate crosses it. |
 | `allow_tools` | extra tool patterns a fenced turn may use without prompting, in the engine's own syntax, such as `Bash(tasks:*)`. |
+| `add_dirs` | directories beyond the working directory that a fenced claude turn's file tools may reach; a fenced turn is confined to the working directory otherwise. |
 | `env` | an `EnvPolicy`: which inherited variables reach the engine, which are removed, which are set. |
 | `extra_args` | appended to the command line verbatim; the escape hatch for a flag the profile does not model. |
 
@@ -51,9 +52,11 @@ A fence is what the turn can do, enforced by the engine's own mechanism, never b
 
 | Fence | claude | codex |
 |---|---|---|
-| `read` | built-in tools limited to `Read`, `Glob`, `Grep` with `--tools`; MCP configuration emptied and pinned so no server on the machine hands tools back; plan mode. With `allow_tools`, the named tools are added to the built-in set, pre-approved, and permission mode becomes `default` so everything else stays denied. | `sandbox_mode="read-only"` with approvals never, set through config overrides because the sandbox flag is absent on `resume`. `allow_tools` has no meaning here: a read-only sandbox cannot let one command write. |
-| `write` | `acceptEdits`: file edits inside the working directory need no approval; shell commands run only when named in `allow_tools`. | `sandbox_mode="workspace-write"`, approvals never. |
+| `read` | restricted mode, so the user's, project's and local settings files are ignored and an allow rule on the machine cannot reopen the shell, and the file tools are confined to the working directory plus `add_dirs`; built-in tools limited to `Read`, `Glob`, `Grep` with `--tools`; MCP configuration emptied and pinned so no server on the machine hands tools back; plan mode. With `allow_tools`, the named tools are added to the built-in set and pre-approved, and permission mode becomes `default`: a shell command the engine itself classifies as read-only, such as `ls` or `git status`, still runs; a command that writes, reaches the network or runs an interpreter is denied unless a pattern in `allow_tools` names it. Measured, not assumed: `touch`, `rm`, `curl` and `python3 -c` are denied, `ls` and `git status` run. | `sandbox_mode="read-only"` with approvals never, set through config overrides because the sandbox flag is absent on `resume`. `allow_tools` has no meaning here: a read-only sandbox cannot let one command write. |
+| `write` | restricted mode as above, with `acceptEdits`: file edits inside the working directory need no approval; shell commands run only when named in `allow_tools`. | `sandbox_mode="workspace-write"`, approvals never. |
 | `act` | `bypassPermissions`. | `--dangerously-bypass-approvals-and-sandbox`, plus the hook-trust bypass when this codex build has it, probed once per binary. |
+
+A fenced claude turn reads no settings file of the machine, so a hook, a permission rule or a plugin configured there does not apply to it; managed settings still do. The act fence is the machine's own configuration, unchanged.
 
 A caller that needs a fence shape beyond these three, such as a settings-file sandbox, builds it from `write` or `act` plus `extra_args`.
 
@@ -94,7 +97,7 @@ Classification reads the engine's own limit verdicts first (`error_max_turns`, t
 
 ## 11. Constraints worth knowing
 
-The cost claude reports is its own estimate and includes subagents; a turn that dies reports no cost at all, so an accumulated total is a floor. Codex under ChatGPT authentication reports tokens but no cost. A claude `read` fence with `allow_tools` runs in `default` permission mode, not plan mode, so the model is not told it is planning. The codex `read` sandbox also has no network unless the caller's codex configuration grants it, which matters when the allowed work is a CLI that talks to a database.
+The cost claude reports is its own estimate and includes subagents; a turn that dies reports no cost at all, so an accumulated total is a floor. Codex under ChatGPT authentication reports tokens but no cost. A claude `read` fence with `allow_tools` runs in `default` permission mode, not plan mode, so the model is not told it is planning, and the engine's own read-only classification lets harmless shell commands through beside the allow-list; the fence keeps the turn from writing, not from looking. The codex `read` sandbox also has no network unless the caller's codex configuration grants it, which matters when the allowed work is a CLI that talks to a database.
 
 ## 12. Versioning
 

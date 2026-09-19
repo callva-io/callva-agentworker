@@ -15,6 +15,7 @@
     "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 600},
     "budget_usd": {"type": ["number", "null"], "exclusiveMinimum": 0, "default": null},
     "allow_tools": {"type": "array", "items": {"type": "string"}, "default": []},
+    "add_dirs": {"type": "array", "items": {"type": "string"}, "default": []},
     "env": {
       "type": "object",
       "additionalProperties": false,

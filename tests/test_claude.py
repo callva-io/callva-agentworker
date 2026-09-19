@@ -14,6 +14,7 @@ def cmd(profile, **kw):
 def test_read_fence_is_tools_plus_mcp_plus_plan():
     c = cmd(Profile(engine="claude", fence="read"))
     assert c[:4] == ["/bin/claude", "-p", "--output-format", "json"]
+    assert "--restricted" in c and "--add-dir" not in c
     assert c[c.index("--tools") + 1] == "Read,Glob,Grep"
     assert c[c.index("--permission-mode") + 1] == "plan"
     assert "--strict-mcp-config" in c and c[c.index("--mcp-config") + 1] == '{"mcpServers":{}}'
@@ -31,8 +32,16 @@ def test_write_and_act_fences():
     assert c_after(w, "--permission-mode") == "acceptEdits"
     assert c_after(w, "--allowedTools") == "Bash(pytest:*)"
     assert "--tools" not in w
+    assert "--restricted" in w
     a = cmd(Profile(engine="claude", fence="act"))
     assert c_after(a, "--permission-mode") == "bypassPermissions"
+    assert "--restricted" not in a
+
+
+def test_add_dirs_on_every_fence():
+    for fence in ("read", "write", "act"):
+        c = cmd(Profile(engine="claude", fence=fence, add_dirs=("/one", "/two")))
+        assert c[c.index("--add-dir") + 1] == "/one" and c.count("--add-dir") == 2
 
 
 def c_after(c, flag):

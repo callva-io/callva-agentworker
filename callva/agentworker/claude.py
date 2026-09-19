@@ -18,6 +18,13 @@ def _base_tool(pattern: str) -> str:
 
 def fence_args(profile: Profile) -> list[str]:
     extras = list(profile.allow_tools)
+    # --restricted is what makes a fence a fact on any machine: the user's,
+    # project's and local settings files are ignored, so an allow rule such as
+    # Bash(*) in ~/.claude/settings.json cannot reopen what the fence closed;
+    # code-running tools exist only when --tools names them; and the file tools
+    # are confined to the working directory plus --add-dir. It refuses
+    # bypassPermissions, so the act fence does not carry it.
+    add_dirs = [arg for d in profile.add_dirs for arg in ("--add-dir", d)]
     if profile.fence == "read":
         tools = list(READ_TOOLS)
         for pattern in extras:
@@ -29,14 +36,15 @@ def fence_args(profile: Profile) -> list[str]:
         # prompt. Plan mode is the model-facing signal when nothing beyond reading
         # is allowed; with extras, default mode keeps everything unnamed denied.
         mode = "default" if extras else "plan"
-        return ["--tools", ",".join(tools), "--allowedTools", ",".join(allowed),
-                "--permission-mode", mode, "--strict-mcp-config", "--mcp-config", EMPTY_MCP]
+        return ["--restricted", "--tools", ",".join(tools), "--allowedTools", ",".join(allowed),
+                "--permission-mode", mode, "--strict-mcp-config", "--mcp-config", EMPTY_MCP,
+                *add_dirs]
     if profile.fence == "write":
-        args = ["--permission-mode", "acceptEdits"]
+        args = ["--restricted", "--permission-mode", "acceptEdits"]
         if extras:
             args += ["--allowedTools", ",".join(extras)]
-        return args
-    return ["--permission-mode", "bypassPermissions"]
+        return args + add_dirs
+    return ["--permission-mode", "bypassPermissions", *add_dirs]
 
 
 def build_command(
