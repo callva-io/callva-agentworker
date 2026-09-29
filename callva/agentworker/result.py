@@ -19,6 +19,7 @@ class FailureKind(StrEnum):
     INVALID_OUTPUT = "invalid_output"
     ERROR = "error"
     CRASH = "crash"
+    INCOMPATIBLE_ENGINE = "incompatible_engine"
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,8 @@ class Result:
     stderr_tail: str = ""
     command: tuple[str, ...] = ()
     raw: dict = field(default_factory=dict)
+    engine_version: str | None = None
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -67,4 +70,5 @@ class Result:
             data["failure"] = {"kind": str(self.failure.kind), "message": self.failure.message}
         data["permission_denials"] = list(self.permission_denials)
         data["command"] = list(self.command)
+        data["warnings"] = list(self.warnings)
         return data

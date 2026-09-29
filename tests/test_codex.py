@@ -1,60 +1,106 @@
-import json
+import pytest
+from conftest import fake
 
-from callva.agentworker import Profile
-from callva.agentworker.codex import build_command, failure_sentence, parse_events, tokens
-
-
-def cmd(profile, **kw):
-    base = {"prompt": "hi", "prompt_via": "stdin", "resume_id": None, "schema_file": None,
-            "out_file": "/tmp/out.txt", "hook_trust": False}
-    base.update(kw)
-    return build_command("/bin/codex", profile, **base)
+from callva.agentworker import FailureKind, Profile, Session, run
 
 
-def test_fresh_stdin_read_fence():
-    p = Profile(engine="codex", fence="read", model="gpt-x", effort="high", service_tier="flex")
-    c = cmd(p)
-    assert c[:3] == ["/bin/codex", "exec", "-"]
-    assert "--skip-git-repo-check" in c and "--json" in c and c[c.index("-o") + 1] == "/tmp/out.txt"
-    assert c[c.index("-m") + 1] == "gpt-x"
-    assert 'model_reasoning_effort="high"' in c and 'model_service_tier="flex"' in c
-    assert 'sandbox_mode="read-only"' in c and 'approval_policy="never"' in c
+def codex(**knobs) -> Profile:
+    return Profile(engine="codex", **{"cli_path": fake("codex"), "timeout_seconds": 20, **knobs})
 
 
-def test_resume_argv_write_and_act():
-    r = cmd(Profile(engine="codex", fence="write"), prompt="go", prompt_via="argv", resume_id="t1")
-    assert r[:5] == ["/bin/codex", "exec", "resume", "t1", "go"]
-    assert 'sandbox_mode="workspace-write"' in r
-    a = cmd(Profile(engine="codex", fence="act", extra_args=("--color", "never")), hook_trust=True)
-    assert "--dangerously-bypass-approvals-and-sandbox" in a
-    assert "--dangerously-bypass-hook-trust" in a and a[-2:] == ["--color", "never"]
-    b = cmd(Profile(engine="codex", fence="act"), hook_trust=False)
-    assert "--dangerously-bypass-hook-trust" not in b
+def requests(record, method):
+    return [r["params"] for r in record()["requests"] if r["method"] == method]
 
 
-def test_schema_file_flag():
-    c = cmd(Profile(engine="codex"), schema_file="/tmp/s.json")
-    assert c[c.index("--output-schema") + 1] == "/tmp/s.json"
+def test_every_codex_knob_reaches_the_app_server(fake_env, record, tmp_path):
+    config = {"default_permissions": "rf", "permissions": {"rf": {"extends": ":read-only",
+                                                                  "network": {"enabled": True}}}}
+    profile = codex(model="gpt-5.6-luna", effort="low", codex_config=config,
+                    approval_policy="never", service_tier="flex", append_system_prompt="APPENDED",
+                    output_schema={"type": "object"}, name="nightly",
+                    codex_extra_args=["-c", "features.x=true", "--enable", "y"])
+    result = run("hi", profile, tmp_path, environ={**fake_env, "FAKE_CODEX": "structured"})
+    assert result.ok, result.failure
+    rec = record()
+    assert rec["argv"] == ["-c", "features.x=true", "--enable", "y",
+                           "app-server", "--listen", "stdio://"]
+    [start] = requests(record, "thread/start")
+    assert start["model"] == "gpt-5.6-luna" and start["config"] == config
+    assert start["approvalPolicy"] == "never" and start["serviceTier"] == "flex"
+    assert start["developerInstructions"] == "APPENDED" and start["cwd"] == str(tmp_path)
+    assert "baseInstructions" not in start
+    [name] = requests(record, "thread/name/set")
+    assert name["name"] == "nightly"
+    [turn] = requests(record, "turn/start")
+    assert turn["effort"] == "low" and turn["outputSchema"] == {"type": "object"}
+    assert result.structured == {"verdict": "ok"}
 
 
-def test_parse_events_and_failure_order():
-    lines = ["Reading additional input from stdin...",
-             json.dumps({"type": "thread.started", "thread_id": "T"}),
-             json.dumps({"type": "item.completed",
-                         "item": {"type": "agent_message", "text": "hello"}}),
-             json.dumps({"type": "error", "message": "transient"}),
-             json.dumps({"type": "turn.failed", "error": {"message": "fatal one"}}),
-             json.dumps({"type": "turn.completed",
-                         "usage": {"input_tokens": 3, "cached_input_tokens": 1,
-                                   "output_tokens": 2}})]
-    parsed = parse_events(lines)
-    assert parsed.thread_id == "T" and parsed.last_agent_message == "hello" and parsed.completed
-    assert failure_sentence(parsed, "", 1) == "fatal one"
-    parsed.failed = None
-    assert failure_sentence(parsed, "", 1) == "transient"
-    parsed.errors.clear()
-    stderr = "Reading additional input from stdin...\nreal cause"
-    assert failure_sentence(parsed, stderr, 1) == "real cause"
-    assert failure_sentence(parsed, "Reading additional input from stdin...", 7) == "exit 7"
-    t = tokens(parsed)
-    assert (t.input, t.output, t.cache_read, t.cache_creation) == (3, 2, 1, None)
+def test_auto_review_and_default_approval(fake_env, record, tmp_path):
+    assert run("x", codex(approval_policy="auto_review"), tmp_path, environ=fake_env).ok
+    [start] = requests(record, "thread/start")
+    assert start["approvalPolicy"] == "on-request" and start["approvalsReviewer"] == "auto_review"
+
+
+def test_defaults_send_nothing_the_profile_did_not_name(fake_env, record, tmp_path):
+    assert run("x", codex(), tmp_path, environ=fake_env).ok
+    [start] = requests(record, "thread/start")
+    assert set(start) <= {"cwd", "approvalPolicy", "approvalsReviewer"}
+    [turn] = requests(record, "turn/start")
+    assert "effort" not in turn and "outputSchema" not in turn
+
+
+def test_success_reads_everything(fake_env, tmp_path):
+    events = []
+    result = run("What is up?", codex(model="gpt-x"), tmp_path, environ=fake_env,
+                 on_event=events.append)
+    assert result.ok and result.answer == "codex answer to: What is up?"
+    assert result.session_id and result.model == "gpt-x" and result.cost_usd is None
+    assert (result.tokens.input, result.tokens.output, result.tokens.cache_read) == (100, 20, 50)
+    assert result.duration_ms == 3683 and result.engine_version == "0.159.0"
+    assert result.raw["turn"]["status"] == "completed"
+    assert events[-1]["method"] == "turn/completed"
+
+
+def test_resume_continues_the_thread_and_counts_only_this_turn(fake_env, record, tmp_path):
+    first = run("x", codex(), tmp_path, environ=fake_env)
+    again = run("y", codex(append_system_prompt="A", codex_config={"sandbox_mode": "read-only"}),
+                tmp_path, environ=fake_env, session=Session.resume(first.session_id))
+    assert again.ok and again.session_id == first.session_id
+    [resume] = requests(record, "thread/resume")
+    assert resume["threadId"] == first.session_id
+    assert resume["developerInstructions"] == "A"
+    assert resume["config"] == {"sandbox_mode": "read-only"}
+    assert requests(record, "thread/start") == []
+    assert again.tokens.input == 100
+
+
+def test_a_pinned_session_is_refused(fake_env, tmp_path):
+    with pytest.raises(ValueError, match="codex cannot pin"):
+        run("x", codex(), tmp_path, environ=fake_env, session=Session.pinned("abc"))
+
+
+@pytest.mark.parametrize("mode,kind", [
+    ("quota", FailureKind.QUOTA),
+    ("unauthorized", FailureKind.NOT_AUTHENTICATED),
+    ("badmodel", FailureKind.MODEL_REFUSED),
+    ("http429", FailureKind.QUOTA),
+    ("budget", FailureKind.BUDGET),
+    ("empty", FailureKind.ERROR),
+    ("crash", FailureKind.CRASH),
+])
+def test_failures_map_to_their_kind(fake_env, tmp_path, mode, kind):
+    result = run("x", codex(), tmp_path, environ={**fake_env, "FAKE_CODEX": mode})
+    assert not result.ok and result.failure.kind == kind, result.failure
+
+
+def test_a_wrapped_provider_error_is_unwrapped(fake_env, tmp_path):
+    result = run("x", codex(), tmp_path, environ={**fake_env, "FAKE_CODEX": "badmodel"})
+    assert result.failure.message == (
+        "The 'gpt-nonexistent-9' model is not supported when using Codex with a ChatGPT account.")
+
+
+def test_structured_answer_that_does_not_parse(fake_env, tmp_path):
+    result = run("x", codex(output_schema={"type": "object"}), tmp_path,
+                 environ={**fake_env, "FAKE_CODEX": "prose_under_schema"})
+    assert result.failure.kind == FailureKind.INVALID_OUTPUT and result.answer == "just prose"

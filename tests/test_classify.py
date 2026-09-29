@@ -39,3 +39,16 @@ def test_unwrap_nested_provider_error():
     assert unwrap_engine_message(wrapped) == "inner sentence"
     assert unwrap_engine_message("plain") == "plain"
     assert unwrap_engine_message('{"message": "top"}') == "top"
+
+
+def test_codex_error_info_names_the_kind_or_the_status():
+    from callva.agentworker.codex import error_info_kind
+
+    assert error_info_kind({"codexErrorInfo": "usageLimitExceeded"}) == (FailureKind.QUOTA, None)
+    assert error_info_kind({"codexErrorInfo": "rateLimitExceeded"})[0] == FailureKind.QUOTA
+    assert error_info_kind({"codexErrorInfo": "unauthorized"})[0] == FailureKind.NOT_AUTHENTICATED
+    assert error_info_kind({"codexErrorInfo": "sessionBudgetExceeded"})[0] == FailureKind.BUDGET
+    assert error_info_kind({"codexErrorInfo": "other"}) == (None, None)
+    info = {"codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 401}}}
+    assert error_info_kind(info) == (None, 401)
+    assert error_info_kind(None) == (None, None)

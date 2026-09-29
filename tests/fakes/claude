@@ -1,78 +1,134 @@
 #!/usr/bin/env python3
-"""A fake `claude -p` for the suite. Behaviour is chosen by FAKE_CLAUDE."""
+"""A fake Claude Code speaking the SDK's stream-json protocol. Behaviour is chosen by FAKE_CLAUDE.
+
+It records its argv and environment, answers the SDK's initialize request, and
+answers the user message with the events and the result document the mode names.
+"""
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
 
 argv = sys.argv[1:]
+if argv in (["-v"], ["--version"]):
+    print(os.environ.get("FAKE_CLAUDE_VERSION", "2.1.280 (Claude Code)"))
+    sys.exit(0)
+
 mode = os.environ.get("FAKE_CLAUDE", "success")
-record = os.environ.get("FAKE_ARGV_FILE")
+record = os.environ.get("FAKE_RECORD")
 if record:
     with open(record, "w") as fh:
-        json.dump(argv, fh)
-
-
-def arg_after(flag):
-    return argv[argv.index(flag) + 1] if flag in argv else None
-
-
-after_p = argv[argv.index("-p") + 1:argv.index("-p") + 2]
-if after_p and not after_p[0].startswith("--"):
-    prompt = after_p[0]
-else:
-    prompt = sys.stdin.read()
-session_id = arg_after("--session-id") or arg_after("--resume") or "learned-session"
-output_format = arg_after("--output-format") or "json"
-
-if mode == "hang":
-    child = subprocess.Popen(["sleep", "300"])
-    pid_file = os.environ.get("FAKE_PID_FILE")
-    if pid_file:
-        with open(pid_file, "w") as fh:
-            fh.write(str(child.pid))
-    time.sleep(300)
+        json.dump({"argv": argv, "env": dict(os.environ), "pid": os.getpid(),
+                   "sid": os.getsid(0)}, fh)
 
 if mode == "crash":
     sys.stderr.write("Error: unknown option --frobnicate\n")
     sys.exit(2)
 
-doc = {
-    "type": "result",
-    "subtype": "success",
-    "is_error": False,
-    "result": f"answer to: {prompt.strip()}",
-    "session_id": session_id,
-    "total_cost_usd": 0.0123,
-    "duration_ms": 1234,
-    "num_turns": 3,
-    "usage": {"input_tokens": 100, "output_tokens": 20,
-              "cache_read_input_tokens": 50, "cache_creation_input_tokens": 5},
-    "modelUsage": {"claude-fake-1": {"outputTokens": 20}},
-    "permission_denials": [],
-}
-if mode == "quota":
-    doc.update({"is_error": True, "result": "You've hit your usage limit. Your limit will reset at 3pm."})
-elif mode == "max_turns":
-    doc.update({"subtype": "error_max_turns", "is_error": True, "result": ""})
-elif mode == "api429":
-    doc.update({"is_error": True, "result": "API Error", "api_error_status": 429})
-elif mode == "auth":
-    doc.update({"is_error": True, "result": "Not logged in. Please run /login."})
-elif mode == "structured":
-    schema = arg_after("--json-schema")
-    doc["structured_output"] = {"verdict": "ok", "schema_seen": schema is not None}
-elif mode == "prose_under_schema":
-    doc["result"] = "just prose"
 
-if output_format == "stream-json":
-    for event in ({"type": "system", "subtype": "init", "session_id": session_id},
-                  {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking"}]}}):
-        sys.stdout.write(json.dumps(event) + "\n")
-        sys.stdout.flush()
-# A hook printing its own document before and after the result, one of them pretty.
-sys.stdout.write(json.dumps({"hook": "before", "note": "noise"}) + "\n")
-sys.stdout.write(json.dumps(doc) + "\n")
-sys.stdout.write(json.dumps({"hook": "after", "nested": {"a": [1, 2]}}, indent=2) + "\n")
-sys.stdout.flush()
+def arg(name):
+    for index, item in enumerate(argv):
+        if item == name and index + 1 < len(argv):
+            return argv[index + 1]
+        if item.startswith(name + "="):
+            return item.split("=", 1)[1]
+    return None
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+session_id = arg("--session-id") or arg("--resume") or "learned-session"
+
+
+def result(**over):
+    doc = {
+        "type": "result", "subtype": "success", "is_error": False,
+        "duration_ms": 1234, "duration_api_ms": 1000, "num_turns": 3,
+        "result": "answer", "session_id": session_id, "total_cost_usd": 0.0123,
+        "usage": {"input_tokens": 100, "output_tokens": 20,
+                  "cache_read_input_tokens": 50, "cache_creation_input_tokens": 5},
+        "modelUsage": {"claude-fake-1": {"outputTokens": 20}},
+        "permission_denials": [],
+    }
+    doc.update(over)
+    return doc
+
+
+def hang():
+    # A tool command in a process group of its own that backgrounds a child and
+    # a double-forked grandchild, the way a shell tool does; then ignore SIGTERM
+    # so only a SIGKILL ends this process.
+    script = "sleep 300 & (sleep 301 &) ; sleep 302"
+    tool = subprocess.Popen(["sh", "-c", script], stdout=subprocess.DEVNULL,
+                            preexec_fn=lambda: os.setpgid(0, 0))
+    pid_file = os.environ.get("FAKE_PID_FILE")
+    time.sleep(0.5)
+    if pid_file:
+        with open(pid_file, "w") as fh:
+            json.dump({"engine": os.getpid(), "tool": tool.pid}, fh)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    while True:
+        time.sleep(1)
+
+
+prompt = None
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except ValueError:
+        continue
+    if message.get("type") == "control_request":
+        emit({"type": "control_response", "response": {
+            "subtype": "success", "request_id": message["request_id"], "response": {}}})
+        continue
+    if message.get("type") != "user":
+        continue
+    content = message.get("message", {}).get("content")
+    prompt = content if isinstance(content, str) else json.dumps(content)
+    emit({"type": "system", "subtype": "init", "session_id": session_id, "apiKeySource": "none",
+          "model": "claude-fake-1", "claude_code_version": "2.1.280", "tools": [], "cwd": os.getcwd()})
+    if mode == "hang":
+        hang()
+    if mode == "retry401":
+        for attempt in range(1, 4):
+            emit({"type": "system", "subtype": "api_retry", "attempt": attempt, "max_retries": 10,
+                  "retry_delay_ms": 100, "error_status": 401, "error": "authentication_failed",
+                  "session_id": session_id})
+        hang()
+    emit({"type": "assistant", "session_id": session_id, "parent_tool_use_id": None,
+          "message": {"model": "claude-fake-1", "role": "assistant",
+                      "content": [{"type": "text", "text": "thinking"}]}})
+    if mode == "success":
+        doc = result(result=f"answer to: {prompt}")
+    elif mode == "structured":
+        doc = result(result="", structured_output={"verdict": "ok",
+                                                   "schema_seen": arg("--json-schema") is not None})
+    elif mode == "prose_under_schema":
+        doc = result(result="just prose")
+    elif mode == "quota":
+        doc = result(is_error=True, result="You've hit your usage limit. Your limit will reset at 3pm.")
+    elif mode == "api429":
+        doc = result(is_error=True, result="API Error", api_error_status=429)
+    elif mode == "auth":
+        doc = result(is_error=True, result="Not logged in · Please run /login", total_cost_usd=0)
+    elif mode == "badmodel":
+        doc = result(is_error=True, api_error_status=404, total_cost_usd=0,
+                     result="There's an issue with the selected model (claude-nonexistent-9-9). "
+                            "It may not exist or you may not have access to it.")
+    elif mode == "budget":
+        doc = result(subtype="error_max_budget_usd", is_error=True, result=None,
+                     errors=["Reached maximum budget ($0.0001)"])
+    elif mode == "max_turns":
+        doc = result(subtype="error_max_turns", is_error=True, result=None,
+                     errors=["Reached maximum number of turns (1)"])
+    else:
+        doc = result(is_error=True, result=f"unknown fake mode {mode}")
+    emit(doc)
+    if doc["is_error"]:
+        sys.exit(1)
+sys.exit(0)

@@ -1,167 +1,123 @@
-"""Claude Code in print mode: the command line, and the result document."""
+"""Claude Code through claude-agent-sdk: the options a profile maps to, and what came back."""
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import json
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
+
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, SystemMessage, query
 
 from .profile import Profile
 from .result import Tokens
 
-READ_TOOLS = ("Read", "Glob", "Grep")
-EMPTY_MCP = '{"mcpServers":{}}'
+# A stream line longer than this ends the turn in the SDK; a tool result that
+# carries a large file is one line, so the SDK's 1 MB default is too tight.
+MAX_LINE_BYTES = 64 * 1024 * 1024
 
 
-def _base_tool(pattern: str) -> str:
-    return pattern.split("(", 1)[0].strip()
-
-
-def fence_args(profile: Profile) -> list[str]:
-    extras = list(profile.allow_tools)
-    # --restricted is what makes a fence a fact on any machine: the user's,
-    # project's and local settings files are ignored, so an allow rule such as
-    # Bash(*) in ~/.claude/settings.json cannot reopen what the fence closed;
-    # code-running tools exist only when --tools names them; and the file tools
-    # are confined to the working directory plus --add-dir. It refuses
-    # bypassPermissions, so the act fence does not carry it.
-    add_dirs = [arg for d in profile.add_dirs for arg in ("--add-dir", d)]
-    if profile.fence == "read":
-        tools = list(READ_TOOLS)
-        for pattern in extras:
-            base = _base_tool(pattern)
-            if base and base not in tools:
-                tools.append(base)
-        allowed = list(READ_TOOLS) + extras
-        # --tools decides which built-in tools exist; --allowedTools which need no
-        # prompt. Plan mode is the model-facing signal when nothing beyond reading
-        # is allowed; with extras, default mode keeps everything unnamed denied.
-        mode = "default" if extras else "plan"
-        return ["--restricted", "--tools", ",".join(tools), "--allowedTools", ",".join(allowed),
-                "--permission-mode", mode, "--strict-mcp-config", "--mcp-config", EMPTY_MCP,
-                *add_dirs]
-    if profile.fence == "write":
-        args = ["--restricted", "--permission-mode", "acceptEdits"]
-        if extras:
-            args += ["--allowedTools", ",".join(extras)]
-        return args + add_dirs
-    return ["--permission-mode", "bypassPermissions", *add_dirs]
-
-
-def build_command(
-    binary: str,
+def options(
     profile: Profile,
     *,
-    prompt: str,
-    prompt_via: str,
+    cli_path: str,
+    cwd: str,
+    env: dict[str, str],
     session_id: str | None,
     resume_id: str | None,
-    schema_text: str | None,
-    stream: bool,
-    name: str | None,
-) -> list[str]:
-    cmd = [binary, "-p"]
-    if prompt_via == "argv":
-        cmd.append(prompt)
-    cmd += ["--output-format", "stream-json" if stream else "json"]
-    if stream:
-        cmd.append("--verbose")
-    if profile.model:
-        cmd += ["--model", profile.model]
-    if profile.effort:
-        cmd += ["--effort", profile.effort]
-    if resume_id:
-        cmd += ["--resume", resume_id]
-    elif session_id:
-        cmd += ["--session-id", session_id]
-    if name:
-        cmd += ["--name", name]
-    if profile.budget_usd is not None:
-        cmd += ["--max-budget-usd", str(profile.budget_usd)]
-    if schema_text:
-        cmd += ["--json-schema", schema_text]
-    cmd += fence_args(profile)
-    cmd += list(profile.extra_args)
-    return cmd
+    stderr: Callable[[str], None],
+) -> ClaudeAgentOptions:
+    """The SDK options for one turn. The system prompt is always the claude_code preset."""
+    system_prompt: dict[str, Any] = {"type": "preset", "preset": "claude_code"}
+    if profile.append_system_prompt:
+        system_prompt["append"] = profile.append_system_prompt
+    extra: dict[str, str | None] = dict(profile.claude_extra_args)
+    if profile.name:
+        extra["name"] = profile.name
+    settings = profile.settings
+    if isinstance(settings, dict):
+        settings = json.dumps(settings)
+    mcp = profile.mcp_config
+    if isinstance(mcp, dict):
+        mcp = json.dumps(mcp)
+    return ClaudeAgentOptions(
+        cli_path=cli_path,
+        cwd=cwd,
+        system_prompt=system_prompt,
+        model=profile.model,
+        effort=profile.effort,
+        max_budget_usd=profile.budget_usd,
+        tools=list(profile.tools) if profile.tools is not None else None,
+        allowed_tools=list(profile.allowed_tools),
+        disallowed_tools=list(profile.disallowed_tools),
+        permission_mode=profile.permission_mode,
+        setting_sources=(list(profile.setting_sources)
+                         if profile.setting_sources is not None else None),
+        settings=settings,
+        mcp_servers=mcp if mcp is not None else {},
+        strict_mcp_config=profile.strict_mcp,
+        add_dirs=list(profile.add_dirs),
+        env=env,
+        extra_args=extra,
+        session_id=session_id,
+        resume=resume_id,
+        output_format=({"type": "json_schema", "schema": dict(profile.output_schema)}
+                       if profile.output_schema else None),
+        stderr=stderr,
+        max_buffer_size=MAX_LINE_BYTES,
+    )
 
 
-def _brace_documents(text: str):
-    """Top-level {...} chunks of `text` that parse as JSON objects."""
-    depth = 0
-    start = None
-    in_string = False
-    escape = False
-    for index, char in enumerate(text):
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            if depth == 0:
-                start = index
-            depth += 1
-        elif char == "}" and depth > 0:
-            depth -= 1
-            if depth == 0 and start is not None:
-                chunk = text[start:index + 1]
-                start = None
-                try:
-                    obj = json.loads(chunk)
-                except ValueError:
-                    continue
-                if isinstance(obj, dict):
-                    yield obj
+def event_dict(message: Any) -> dict:
+    """One SDK message as a plain dict for `on_event`: a system message is the
+    engine's own event; any other message is its fields plus `type`, the SDK's class name."""
+    if isinstance(message, SystemMessage) and isinstance(message.data, dict):
+        return dict(message.data)
+    if dataclasses.is_dataclass(message):
+        data = dataclasses.asdict(message)
+        data["type"] = type(message).__name__
+        return data
+    return {"type": type(message).__name__, "value": repr(message)}
 
 
-def documents(stdout_lines: list[str]) -> list[dict]:
-    """Every JSON object on stdout, one per line first, then by brace scan.
+@dataclass
+class Outcome:
+    """Everything one claude turn produced, as the SDK handed it over."""
 
-    Hooks configured on the machine print their own JSON around the result, and
-    some print it pretty, so both readings are needed.
-    """
-    docs: list[dict] = []
-    unparsed: list[str] = []
-    for line in stdout_lines:
-        stripped = line.strip()
-        if not stripped.startswith("{"):
-            unparsed.append(line)
-            continue
-        try:
-            obj = json.loads(stripped)
-        except ValueError:
-            unparsed.append(line)
-            continue
-        if isinstance(obj, dict):
-            docs.append(obj)
-        else:
-            unparsed.append(line)
-    if unparsed:
-        docs.extend(_brace_documents("\n".join(unparsed)))
-    return docs
+    result: ResultMessage | None = None
+    init: dict | None = None
+    last_retry: dict | None = None
+    error: BaseException | None = None
+    stderr: deque = field(default_factory=lambda: deque(maxlen=200))
 
 
-def result_document(stdout_lines: list[str]) -> dict | None:
-    docs = documents(stdout_lines)
-    for doc in reversed(docs):
-        if doc.get("type") == "result":
-            return doc
-    for doc in reversed(docs):
-        if {"result", "is_error", "subtype"} & set(doc):
-            return doc
-    return None
+async def turn(prompt: str, opts: ClaudeAgentOptions, outcome: Outcome,
+               on_event: Callable[[dict], None] | None) -> None:
+    try:
+        async for message in query(prompt=prompt, options=opts):
+            if isinstance(message, SystemMessage):
+                if message.subtype == "init":
+                    outcome.init = dict(message.data)
+                elif message.subtype == "api_retry":
+                    outcome.last_retry = dict(message.data)
+            elif isinstance(message, ResultMessage):
+                outcome.result = message
+            if on_event is not None:
+                # A caller's renderer never ends the turn.
+                with contextlib.suppress(Exception):
+                    on_event(event_dict(message))
+    except BaseException as exc:  # every ending is read, none is raised
+        # The SDK raises after yielding an error result; the result is the report.
+        outcome.error = exc
 
 
-def _model_from_usage(doc: dict) -> str | None:
-    usage = doc.get("modelUsage")
+def _model_from_usage(usage: Any) -> str | None:
     if not isinstance(usage, dict) or not usage:
         return None
-    best = None
-    best_tokens = -1
+    best, best_tokens = None, -1
     for model, counts in usage.items():
         tokens = counts.get("outputTokens", 0) if isinstance(counts, dict) else 0
         if tokens > best_tokens:
@@ -169,26 +125,33 @@ def _model_from_usage(doc: dict) -> str | None:
     return best
 
 
-def read(doc: dict) -> dict[str, Any]:
-    usage = doc.get("usage") if isinstance(doc.get("usage"), dict) else {}
-    answer = doc.get("result")
+def read(message: ResultMessage) -> dict[str, Any]:
+    """The fields of a result message the Result carries."""
+    usage = message.usage if isinstance(message.usage, dict) else {}
+    answer = message.result
+    if answer is None and message.errors:
+        answer = "; ".join(str(e) for e in message.errors)
     return {
         "answer": (answer if isinstance(answer, str)
                    else "" if answer is None else json.dumps(answer)),
-        "structured": doc.get("structured_output"),
-        "session_id": doc.get("session_id"),
-        "cost_usd": doc.get("total_cost_usd"),
-        "duration_ms": doc.get("duration_ms"),
-        "num_turns": doc.get("num_turns"),
+        "structured": message.structured_output,
+        "session_id": message.session_id,
+        "cost_usd": message.total_cost_usd,
+        "duration_ms": message.duration_ms,
+        "num_turns": message.num_turns,
         "tokens": Tokens(
             input=usage.get("input_tokens"),
             output=usage.get("output_tokens"),
             cache_read=usage.get("cache_read_input_tokens"),
             cache_creation=usage.get("cache_creation_input_tokens"),
         ),
-        "model": _model_from_usage(doc),
-        "permission_denials": tuple(doc.get("permission_denials") or ()),
-        "subtype": doc.get("subtype"),
-        "is_error": bool(doc.get("is_error")),
-        "api_error_status": doc.get("api_error_status"),
+        "model": _model_from_usage(message.model_usage),
+        "permission_denials": tuple(message.permission_denials or ()),
+        "subtype": message.subtype,
+        "is_error": bool(message.is_error),
+        "api_error_status": message.api_error_status,
     }
+
+
+def raw(message: ResultMessage | None) -> dict:
+    return dataclasses.asdict(message) if message is not None else {}

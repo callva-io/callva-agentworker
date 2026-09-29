@@ -1,10 +1,8 @@
-"""One headless turn of a coding agent: launch, run, read, classify.
+"""One headless turn of a coding agent, run through the vendor's own SDK.
 
-    from callva.agentworker import Profile, Session, run
+    from callva.agentworker import Profile, run
 
-    result = run("Summarise README.md in one line.",
-                 Profile(engine="claude", fence="read", timeout_seconds=120),
-                 cwd=".")
+    result = run(prompt, Profile.from_dict(config), cwd=".")
     if result.ok:
         print(result.answer)
     else:
@@ -14,12 +12,11 @@
 """
 
 from .binaries import Probe, find_binary, probe
+from .guard import TESTED_VERSIONS
 from .profile import (
-    DEFAULT_DENY,
     ENGINES,
-    FENCES,
     PROFILE_SCHEMA,
-    EnvPolicy,
+    SESSION_MARKERS,
     Profile,
     ProfileError,
     Session,
@@ -31,11 +28,10 @@ from .run import run
 from .version import __version__
 
 __all__ = [
-    "DEFAULT_DENY",
     "ENGINES",
-    "FENCES",
     "PROFILE_SCHEMA",
-    "EnvPolicy",
+    "SESSION_MARKERS",
+    "TESTED_VERSIONS",
     "Failure",
     "FailureKind",
     "Probe",

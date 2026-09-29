@@ -49,36 +49,27 @@ class Probe:
     error: str | None = None
 
 
-def probe(engine: str, environ: Mapping[str, str] | None = None, timeout: float = 20.0) -> Probe:
-    """Whether the engine is present, and what version answers."""
-    path = find_binary(engine, environ)
-    if not path:
-        return Probe(engine, False, error=f"no {engine} executable on PATH or in the usual places")
+def version_line(path: str, environ: Mapping[str, str] | None = None,
+                 timeout: float = 20.0) -> tuple[str | None, str | None]:
+    """The first line `path --version` prints, or why there is none."""
     try:
         done = subprocess.run([path, "--version"], capture_output=True, text=True,
                               timeout=timeout,
                               env=dict(os.environ if environ is None else environ))
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return Probe(engine, True, path=path, error=str(exc))
+        return None, str(exc)
     if done.returncode != 0:
-        error = (done.stderr or done.stdout).strip()[-300:]
-        return Probe(engine, True, path=path, error=error)
-    version = (done.stdout or done.stderr).strip().splitlines()[0]
-    return Probe(engine, True, path=path, version=version)
+        return None, (done.stderr or done.stdout).strip()[-300:] or f"exit {done.returncode}"
+    text = (done.stdout or done.stderr).strip()
+    if not text:
+        return None, "printed no version"
+    return text.splitlines()[0], None
 
 
-_support_cache: dict[tuple[str, str], bool] = {}
-
-
-def codex_supports(binary: str, flag: str, environ: Mapping[str, str] | None = None) -> bool:
-    """Whether this codex build knows `flag` on `exec`, read from its own help once."""
-    key = (binary, flag)
-    if key not in _support_cache:
-        try:
-            done = subprocess.run([binary, "exec", "--help"], capture_output=True, text=True,
-                                  timeout=20.0,
-                                  env=dict(os.environ if environ is None else environ))
-            _support_cache[key] = flag in (done.stdout or "") + (done.stderr or "")
-        except (OSError, subprocess.TimeoutExpired):
-            _support_cache[key] = False
-    return _support_cache[key]
+def probe(engine: str, environ: Mapping[str, str] | None = None, timeout: float = 20.0) -> Probe:
+    """Whether the engine is present, and what version answers."""
+    path = find_binary(engine, environ)
+    if not path:
+        return Probe(engine, False, error=f"no {engine} executable on PATH or in the usual places")
+    version, error = version_line(path, environ, timeout)
+    return Probe(engine, True, path=path, version=version, error=error)

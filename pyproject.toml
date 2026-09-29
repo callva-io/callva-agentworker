@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "callva-agentworker"
 dynamic = ["version"]
-description = "One headless turn of a coding agent (Claude Code or Codex): launch, run, read, classify."
+description = "One headless turn of a coding agent (Claude Code or Codex) through the vendor SDKs: explicit knobs, a deadline that kills the tree, one result."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "CallVA" }]
-keywords = ["claude", "codex", "headless", "agent", "worker", "subprocess"]
+keywords = ["claude", "codex", "headless", "agent", "worker", "claude-agent-sdk", "openai-codex"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = []
+dependencies = ["claude-agent-sdk==0.2.161", "openai-codex==0.159.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]

@@ -1,66 +1,175 @@
 #!/usr/bin/env python3
-"""A fake `codex exec` for the suite. Behaviour is chosen by FAKE_CODEX."""
+"""A fake `codex app-server` speaking the SDK's JSON-RPC over stdio. Behaviour is chosen by FAKE_CODEX.
+
+It records its argv, its environment and every request it receives, and answers
+a turn with the notifications the mode names. The response shapes are those a
+real codex 0.159.0 app-server sent, with the machine's values replaced.
+"""
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
+import uuid
 
 argv = sys.argv[1:]
-mode = os.environ.get("FAKE_CODEX", "success")
-record = os.environ.get("FAKE_ARGV_FILE")
-if record:
-    with open(record, "w") as fh:
-        json.dump(argv, fh)
-
-if argv[:2] == ["exec", "--help"]:
-    extra = " --dangerously-bypass-hook-trust" if os.environ.get("FAKE_CODEX_HOOKTRUST") else ""
-    print("Usage: codex exec [OPTIONS] [PROMPT]\n  --json  -o <FILE>" + extra)
-    sys.exit(0)
 if argv == ["--version"]:
-    print("codex-cli 0.0.0-fake")
+    print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.159.0"))
     sys.exit(0)
 
-positional = [a for a in argv[1:] if not a.startswith("-") and a not in ("resume",)]
-# after "exec" and an optional "resume <id>", the first positional is the prompt or "-"
-tail = argv[1:]
-resume_id = None
-if tail and tail[0] == "resume":
-    resume_id = tail[1]
-    tail = tail[2:]
-prompt_arg = tail[0]
-prompt = sys.stdin.read() if prompt_arg == "-" else prompt_arg
-out_file = argv[argv.index("-o") + 1] if "-o" in argv else None
-sys.stderr.write("Reading additional input from stdin...\n")
-
-if mode == "hang":
-    child = subprocess.Popen(["sleep", "300"])
-    pid_file = os.environ.get("FAKE_PID_FILE")
-    if pid_file:
-        with open(pid_file, "w") as fh:
-            fh.write(str(child.pid))
-    time.sleep(300)
+mode = os.environ.get("FAKE_CODEX", "success")
+record = os.environ.get("FAKE_RECORD")
+requests = []
 
 
-def emit(event):
-    sys.stdout.write(json.dumps(event) + "\n")
-    sys.stdout.flush()
+def save():
+    if record:
+        with open(record, "w") as fh:
+            json.dump({"argv": argv, "env": dict(os.environ), "pid": os.getpid(),
+                       "sid": os.getsid(0), "requests": requests}, fh)
 
 
-thread_id = resume_id or "thread-fake-1"
-emit({"type": "thread.started", "thread_id": thread_id})
-if mode == "quota":
-    emit({"type": "turn.failed", "error": {"message": json.dumps(
-        {"error": {"message": "Rate limit reached for gpt-fake: too many requests", "code": "rate_limit_exceeded"}})}})
-    sys.exit(1)
+save()
 if mode == "crash":
     sys.stderr.write("thread 'main' panicked at something\n")
     sys.exit(101)
-answer = f"codex answer to: {prompt.strip()}"
-if mode == "structured":
-    answer = json.dumps({"verdict": "ok"})
-emit({"type": "item.completed", "item": {"type": "agent_message", "text": answer}})
-emit({"type": "turn.completed", "usage": {"input_tokens": 300, "cached_input_tokens": 100, "output_tokens": 40}})
-if out_file and mode != "no_file":
-    with open(out_file, "w") as fh:
-        fh.write(answer + "\n")
+
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def notify(method, params):
+    send({"method": method, "params": params})
+
+
+def thread_obj(thread_id, cwd, model):
+    return {
+        "id": thread_id, "environments": [{"environmentId": "local", "cwd": cwd,
+                                           "runtimeWorkspaceRoots": [cwd]}],
+        "extra": None, "sessionId": thread_id, "forkedFromId": None, "parentThreadId": None,
+        "preview": "", "ephemeral": False, "section": None, "sectionEnteredAt": None,
+        "projectId": None, "historyMode": "paginated", "modelProvider": "openai", "model": model,
+        "reasoningEffort": "low", "createdAt": 1790695150, "updatedAt": 1790695150,
+        "recencyAt": 1790695150, "status": {"type": "idle"}, "path": None, "cwd": cwd,
+        "cliVersion": "0.159.0", "originator": "codex_python_sdk", "source": "vscode",
+        "canAcceptDirectInput": True, "threadSource": None, "agentNickname": None,
+        "agentRole": None, "gitInfo": None, "name": None, "daybreakEnabled": None, "turns": [],
+    }
+
+
+def thread_result(thread_id, params):
+    cwd = params.get("cwd") or os.getcwd()
+    model = params.get("model") or "gpt-fake"
+    return {
+        "thread": thread_obj(thread_id, cwd, model), "model": model, "modelProvider": "openai",
+        "serviceTier": params.get("serviceTier"), "disabledPluginIds": [], "cwd": cwd,
+        "runtimeWorkspaceRoots": [cwd], "instructionSources": [],
+        "approvalPolicy": params.get("approvalPolicy") or "on-request",
+        "approvalsReviewer": "user", "sandbox": {"type": "readOnly", "networkAccess": False},
+        "activePermissionProfile": {"id": ":read-only", "extends": None},
+        "reasoningEffort": "low", "multiAgentMode": "explicitRequestOnly",
+    }
+
+
+def turn_obj(turn_id, status, error=None, items=None):
+    return {"id": turn_id, "items": items or [], "itemsView": "summary" if items else "notLoaded",
+            "status": status, "error": error, "startedAt": 1790695151,
+            "completedAt": None if status == "inProgress" else 1790695154,
+            "durationMs": None if status == "inProgress" else 3683}
+
+
+def hang():
+    script = "sleep 300 & (sleep 301 &) ; sleep 302"
+    tool = subprocess.Popen(["sh", "-c", script], stdout=subprocess.DEVNULL,
+                            preexec_fn=lambda: os.setpgid(0, 0))
+    pid_file = os.environ.get("FAKE_PID_FILE")
+    time.sleep(0.5)
+    if pid_file:
+        with open(pid_file, "w") as fh:
+            json.dump({"engine": os.getpid(), "tool": tool.pid}, fh)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    while True:
+        time.sleep(1)
+
+
+def run_turn(thread_id, turn_id, params):
+    ids = {"threadId": thread_id, "turnId": turn_id}
+    notify("turn/started", {"threadId": thread_id, "turn": turn_obj(turn_id, "inProgress")})
+    if mode == "hang":
+        hang()
+    prompt = " ".join(i.get("text", "") for i in params.get("input", []))
+    failures = {
+        "quota": {"codexErrorInfo": "usageLimitExceeded",
+                  "message": "You've hit your usage limit. Try again later."},
+        "unauthorized": {"codexErrorInfo": "other", "message": (
+            "unexpected status 401 Unauthorized: Missing bearer or basic authentication in "
+            "header, url: https://api.openai.com/v1/responses")},
+        "badmodel": {"codexErrorInfo": "other", "message": json.dumps({
+            "type": "error", "status": 400, "error": {"type": "invalid_request_error", "message":
+                "The 'gpt-nonexistent-9' model is not supported when using Codex with a "
+                "ChatGPT account."}})},
+        "http429": {"codexErrorInfo": {"responseStreamConnectionFailed": {"httpStatusCode": 429}},
+                    "message": "stream failed"},
+        "budget": {"codexErrorInfo": "sessionBudgetExceeded", "message": "session budget spent"},
+    }
+    if mode in failures:
+        error = failures[mode]
+        notify("error", {**ids, "error": error, "willRetry": False})
+        notify("turn/completed", {"threadId": thread_id,
+                                  "turn": turn_obj(turn_id, "failed", error=error)})
+        return
+    items = []
+    if mode != "empty":
+        text = f"codex answer to: {prompt}"
+        if mode == "structured":
+            text = json.dumps({"verdict": "ok"})
+        elif mode == "prose_under_schema":
+            text = "just prose"
+        item = {"type": "agentMessage", "id": "msg_1", "text": text, "phase": "final_answer"}
+        notify("item/completed", {**ids, "item": item, "completedAtMs": 1790695154880})
+        items = [item]
+    before = 1000 if params.get("threadId") in resumed else 0
+    notify("thread/tokenUsage/updated", {**ids, "tokenUsage": {
+        "total": {"totalTokens": before + 120, "inputTokens": before + 100,
+                  "cachedInputTokens": 50, "cacheWriteInputTokens": 0, "outputTokens": 20,
+                  "reasoningOutputTokens": 0},
+        "last": {"totalTokens": 120, "inputTokens": 100, "cachedInputTokens": 50,
+                 "cacheWriteInputTokens": 0, "outputTokens": 20, "reasoningOutputTokens": 0},
+        "modelContextWindow": 258400}})
+    notify("turn/completed", {"threadId": thread_id,
+                              "turn": turn_obj(turn_id, "completed", items=items)})
+
+
+resumed = set()
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except ValueError:
+        continue
+    method = message.get("method")
+    params = message.get("params") or {}
+    requests.append({"method": method, "params": params})
+    save()
+    rid = message.get("id")
+    if rid is None:
+        continue
+    if method == "initialize":
+        send({"id": rid, "result": {
+            "userAgent": "codex_python_sdk/0.159.0 (Fake OS; arm64) unknown (codex_python_sdk; 0.159.0)",
+            "codexHome": "/nonexistent/codex-home", "platformFamily": "unix", "platformOs": "macos"}})
+    elif method == "thread/start":
+        send({"id": rid, "result": thread_result(str(uuid.uuid4()), params)})
+    elif method == "thread/resume":
+        resumed.add(params["threadId"])
+        send({"id": rid, "result": thread_result(params["threadId"], params)})
+    elif method == "thread/name/set":
+        send({"id": rid, "result": {}})
+    elif method == "turn/start":
+        turn_id = str(uuid.uuid4())
+        send({"id": rid, "result": {"turn": turn_obj(turn_id, "inProgress")}})
+        run_turn(params["threadId"], turn_id, params)
+    else:
+        send({"id": rid, "error": {"code": -32601, "message": f"fake has no {method}"}})

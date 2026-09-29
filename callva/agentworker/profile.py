@@ -1,24 +1,59 @@
-"""How a turn is run, and which conversation it belongs to."""
+"""How a turn is run, and which conversation it belongs to.
+
+A profile is a flat record of explicit knobs. There is no inheritance, no
+preset and no fence: every behaviour a turn has is named by one field here, and
+a field that one engine cannot honour is refused for that engine when the
+profile is built, never ignored while it runs.
+"""
 
 from __future__ import annotations
 
 import fnmatch
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from importlib import resources
 from typing import Any
 
 ENGINES = ("claude", "codex")
-FENCES = ("read", "write", "act")
 
-# Markers Claude Code sets in its own environment; a child claude that sees
-# them believes it runs inside another session and behaves accordingly.
-DEFAULT_DENY = ("CLAUDECODE", "CLAUDECODE_*", "CLAUDE_CODE_ENTRYPOINT")
+# Variables a running Claude Code session sets in the environment of everything
+# it starts. A child engine that inherits them believes it runs inside that
+# session: it may reuse its effort, its session id or its messaging socket.
+SESSION_MARKERS = (
+    "CLAUDECODE",
+    "CLAUDECODE_*",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_*",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_CODE_SDK_READS_SESSION_STATE",
+    "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+    "CLAUDE_AGENT_SDK_VERSION",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "AI_AGENT",
+)
+
+# 0.1.x keys that no longer exist, and what replaces each.
+REMOVED_KEYS = {
+    "fence": (
+        "'fence' was removed in 0.2.0: a profile names every behaviour explicitly. "
+        "On claude use tools, allowed_tools, disallowed_tools, permission_mode, "
+        "setting_sources, settings (sandbox and permissions), mcp_config and strict_mcp; "
+        "on codex use codex_config (permissions and sandbox) and approval_policy"
+    ),
+    "allow_tools": "'allow_tools' was removed in 0.2.0: use tools and allowed_tools (claude)",
+    "env": "'env' was removed in 0.2.0: use env_set, env_remove and strip_session_markers",
+    "extra_args": "'extra_args' was removed in 0.2.0: use claude_extra_args or codex_extra_args",
+}
 
 
 class ProfileError(ValueError):
-    """A profile that the schema refuses; the message names the path."""
+    """A profile that cannot be run; the message names the knob and why."""
 
 
 def load_profile_schema() -> dict:
@@ -29,110 +64,201 @@ def load_profile_schema() -> dict:
 PROFILE_SCHEMA: dict = load_profile_schema()
 
 
-def _matches(name: str, patterns) -> bool:
-    return any(fnmatch.fnmatchcase(name, p) for p in patterns)
-
-
 @dataclass(frozen=True)
-class EnvPolicy:
-    """Which inherited variables reach the engine.
+class Profile:
+    """How one engine runs one turn. Every field is a knob; `None`, an empty
+    collection or `False` leaves the engine's own default in place."""
 
-    `allow` keeps only the named variables or globs when given; `deny` removes
-    names or globs; `set` adds or overrides. Applied in that order.
-    """
+    engine: str
+    """Which engine runs the turn: `claude` (Claude Code through claude-agent-sdk) or `codex`
+    (Codex through openai-codex)."""
 
-    allow: tuple[str, ...] | None = None
-    deny: tuple[str, ...] = DEFAULT_DENY
-    set: dict[str, str] = field(default_factory=dict)
+    cli_path: str | None = None
+    """The engine CLI to run. Claude: passed to the SDK as the CLI it launches. Codex: the
+    binary whose `app-server` the SDK talks to. `None` finds the installed CLI on `PATH` and in
+    the usual install places; the CLI bundled inside either SDK is never used."""
+
+    model: str | None = None
+    """Claude: `--model`. Codex: the thread's model."""
+
+    effort: str | None = None
+    """Claude: `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Codex: the turn's reasoning
+    effort (`minimal` to `xhigh` and what that codex build adds)."""
+
+    timeout_seconds: float = 600.0
+    """Both: the deadline for the whole turn. When it passes the engine and every process it
+    started are killed, grandchildren included, and the turn is a `timeout` failure."""
+
+    budget_usd: float | None = None
+    """Claude: `--max-budget-usd`; the engine ends the turn when its own cost estimate crosses
+    it. Codex: refused, codex reports no cost."""
+
+    tools: tuple[str, ...] | None = None
+    """Claude: `--tools`, the built-in tools that exist in the turn; an empty tuple removes all
+    of them. Codex: refused."""
+
+    allowed_tools: tuple[str, ...] = ()
+    """Claude: `--allowedTools`, tool patterns that run without a permission prompt, such as
+    `Bash(git status:*)`. Codex: refused."""
+
+    disallowed_tools: tuple[str, ...] = ()
+    """Claude: `--disallowedTools`, tool patterns removed from the turn. Codex: refused."""
+
+    permission_mode: str | None = None
+    """Claude: `--permission-mode` (`default`, `acceptEdits`, `plan`, `dontAsk`, `auto`,
+    `bypassPermissions`). Codex: refused; use `approval_policy` and `codex_config`."""
+
+    setting_sources: tuple[str, ...] | None = None
+    """Claude: `--setting-sources`, which settings files load (`user`, `project`, `local`);
+    `("project", "local")` loads the target's CLAUDE.md, rules and hooks without the user's.
+    `None` loads what the CLI loads by default. Codex: refused."""
+
+    settings: Mapping[str, Any] | str | None = None
+    """Claude: `--settings`, a settings object (or a path or JSON text) layered above the
+    settings files; this is where a sandbox and permission rules go. Codex: refused; use
+    `codex_config`."""
+
+    mcp_config: Mapping[str, Any] | str | None = None
+    """Claude: `--mcp-config`, an object shaped `{"mcpServers": {...}}` or a path to one.
+    Codex: refused; MCP servers go in `codex_config` under `mcp_servers`."""
+
+    strict_mcp: bool = False
+    """Claude: `--strict-mcp-config`, so only `mcp_config` servers exist in the turn. Codex:
+    refused."""
+
+    add_dirs: tuple[str, ...] = ()
+    """Claude: `--add-dir` per entry, directories the file tools may reach beyond the working
+    directory. Codex: refused; give a directory access in the permissions of `codex_config`."""
+
+    append_system_prompt: str | None = None
+    """Claude: appended to the Claude Code system prompt, which is always kept. Codex: the
+    thread's developer instructions, added beside codex's own instructions. Neither engine's
+    system prompt is ever replaced."""
+
+    output_schema: Mapping[str, Any] | None = None
+    """Both: a JSON schema the final answer must satisfy (claude `--json-schema`, codex turn
+    output schema). The parsed answer lands in `Result.structured`; an answer that does not
+    parse is an `invalid_output` failure."""
+
+    name: str | None = None
+    """Claude: `--name`, the session's display name. Codex: the thread's name."""
+
+    env_set: Mapping[str, str] = field(default_factory=dict)
+    """Both: variables set in the engine's environment, over what it inherits."""
+
+    env_remove: tuple[str, ...] = ()
+    """Both: names or globs removed from what the engine inherits, removed for real by the
+    launcher the library puts in front of the CLI. A name in `env_set` is never removed."""
+
+    strip_session_markers: bool = True
+    """Both: also remove `SESSION_MARKERS`, the variables a calling Claude Code session leaves
+    in its children's environment. On claude the values the SDK itself sets for the engine
+    (its entrypoint and version) stay."""
+
+    codex_config: Mapping[str, Any] | None = None
+    """Codex: the thread's config, keyed as in `config.toml`; this is where permission profiles
+    (`default_permissions`, `permissions`), `sandbox_mode`, network and `mcp_servers` go. Claude:
+    refused; use `settings`."""
+
+    approval_policy: str | None = None
+    """Codex: what happens when the turn asks to escalate. `never` refuses every escalation
+    without asking; `auto_review` lets codex's reviewer decide. `None` is the SDK's default,
+    `auto_review`. Claude: refused; use `permission_mode`."""
+
+    service_tier: str | None = None
+    """Codex: the thread's service tier. Claude: refused."""
+
+    bypass_hook_trust: bool = False
+    """Codex: refused when true. The app-server this library drives has no way to run hooks the
+    machine has not trusted: `bypass_hook_trust` is not a config key there, and the CLI's
+    `--dangerously-bypass-hook-trust` has no effect on it (measured on 0.159.0). Hooks the
+    machine trusts run. Claude: refused; claude has no hook trust."""
+
+    claude_extra_args: Mapping[str, str | None] = field(default_factory=dict)
+    """Claude: extra CLI flags, `{"flag": "value"}` or `{"flag": None}` for a bare flag, for a
+    flag no knob names. Codex: refused."""
+
+    codex_extra_args: tuple[str, ...] = ()
+    """Codex: arguments placed before `app-server` on the codex command line, such as
+    `("-c", "key=value")` or `("--enable", "feature")`. Claude: refused."""
 
     def __post_init__(self) -> None:
-        if self.allow is not None:
-            object.__setattr__(self, "allow", tuple(self.allow))
-        object.__setattr__(self, "deny", tuple(self.deny))
-        object.__setattr__(self, "set", dict(self.set))
-
-    def apply(self, base: Mapping[str, str]) -> dict[str, str]:
-        env: dict[str, str] = {}
-        for key, value in base.items():
-            if self.allow is not None and not _matches(key, self.allow):
-                continue
-            if _matches(key, self.deny):
-                continue
-            env[key] = value
-        env.update(self.set)
-        return env
+        for name in ("tools", "setting_sources"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, tuple(value))
+        for name in ("allowed_tools", "disallowed_tools", "env_remove", "codex_extra_args"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+        object.__setattr__(self, "add_dirs", tuple(str(d) for d in self.add_dirs))
+        object.__setattr__(self, "env_set", dict(self.env_set))
+        object.__setattr__(self, "claude_extra_args", dict(self.claude_extra_args))
+        for name in ("settings", "mcp_config", "codex_config", "output_schema"):
+            value = getattr(self, name)
+            if isinstance(value, Mapping):
+                object.__setattr__(self, name, dict(value))
+        validate_profile(self.to_dict())
+        _refuse_for_engine(self)
 
     def to_dict(self) -> dict:
-        data: dict[str, Any] = {"deny": list(self.deny), "set": dict(self.set)}
-        if self.allow is not None:
-            data["allow"] = list(self.allow)
+        data: dict[str, Any] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, tuple):
+                value = list(value)
+            elif isinstance(value, Mapping):
+                value = dict(value)
+            data[f.name] = value
         return data
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any] | None) -> EnvPolicy:
-        data = dict(data or {})
-        allow = data.get("allow")
-        return cls(
-            allow=tuple(allow) if allow is not None else None,
-            deny=tuple(data.get("deny", DEFAULT_DENY)),
-            set=dict(data.get("set", {})),
-        )
-
-
-@dataclass(frozen=True)
-class Profile:
-    engine: str
-    fence: str = "read"
-    model: str | None = None
-    effort: str | None = None
-    service_tier: str | None = None
-    timeout_seconds: float = 600.0
-    budget_usd: float | None = None
-    allow_tools: tuple[str, ...] = ()
-    add_dirs: tuple[str, ...] = ()
-    env: EnvPolicy = field(default_factory=EnvPolicy)
-    extra_args: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "allow_tools", tuple(self.allow_tools))
-        object.__setattr__(self, "add_dirs", tuple(str(d) for d in self.add_dirs))
-        object.__setattr__(self, "extra_args", tuple(self.extra_args))
-        if isinstance(self.env, Mapping):
-            object.__setattr__(self, "env", EnvPolicy.from_dict(self.env))
-        validate_profile(self.to_dict())
-
-    def to_dict(self) -> dict:
-        return {
-            "engine": self.engine,
-            "fence": self.fence,
-            "model": self.model,
-            "effort": self.effort,
-            "service_tier": self.service_tier,
-            "timeout_seconds": self.timeout_seconds,
-            "budget_usd": self.budget_usd,
-            "allow_tools": list(self.allow_tools),
-            "add_dirs": list(self.add_dirs),
-            "env": self.env.to_dict(),
-            "extra_args": list(self.extra_args),
-        }
-
-    @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Profile:
+        """Build a profile from configuration, refusing unknown and 0.1.x keys by name."""
+        if not isinstance(data, Mapping):
+            raise ProfileError("profile: expected an object")
+        for key, message in REMOVED_KEYS.items():
+            if key in data:
+                raise ProfileError(f"profile.{key}: {message}")
         validate_profile(data)
-        data = dict(data)
-        return cls(
-            engine=data["engine"],
-            fence=data.get("fence", "read"),
-            model=data.get("model"),
-            effort=data.get("effort"),
-            service_tier=data.get("service_tier"),
-            timeout_seconds=float(data.get("timeout_seconds", 600.0)),
-            budget_usd=data.get("budget_usd"),
-            allow_tools=tuple(data.get("allow_tools", ())),
-            add_dirs=tuple(data.get("add_dirs", ())),
-            env=EnvPolicy.from_dict(data.get("env")),
-            extra_args=tuple(data.get("extra_args", ())),
+        return cls(**dict(data))
+
+
+# Knobs that only one engine can honour, and what setting them on the other means.
+_CLAUDE_ONLY = (
+    "budget_usd", "tools", "allowed_tools", "disallowed_tools", "permission_mode",
+    "setting_sources", "settings", "mcp_config", "strict_mcp", "add_dirs", "claude_extra_args",
+)
+_CODEX_ONLY = ("codex_config", "approval_policy", "service_tier", "codex_extra_args")
+
+
+def _refuse_for_engine(profile: Profile) -> None:
+    engine = profile.engine
+    other_only = _CODEX_ONLY if engine == "claude" else _CLAUDE_ONLY
+    for name in other_only:
+        value = getattr(profile, name)
+        # An empty `tools` tuple is a real claude setting (no built-in tools), so a
+        # tuple counts as set whenever it is not None for that one knob.
+        is_set = value is not None if name == "tools" else bool(value)
+        if is_set:
+            raise ProfileError(
+                f"profile.{name}: {engine} cannot honour it; it is a "
+                f"{'codex' if engine == 'claude' else 'claude'} knob"
+            )
+    if profile.bypass_hook_trust:
+        if engine == "claude":
+            raise ProfileError("profile.bypass_hook_trust: claude has no hook trust to bypass")
+        raise ProfileError(
+            "profile.bypass_hook_trust: codex app-server cannot honour it; there is no hook-trust "
+            "bypass over app-server, so trust the hooks in codex itself"
         )
+    overlap = [name for name in profile.env_set if _matches(name, profile.env_remove)]
+    if overlap:
+        raise ProfileError(
+            f"profile.env_set: {overlap} also match env_remove; a variable is either set or removed"
+        )
+
+
+def _matches(name: str, patterns) -> bool:
+    return any(fnmatch.fnmatchcase(name, p) for p in patterns)
 
 
 @dataclass(frozen=True)
@@ -140,7 +266,7 @@ class Session:
     """Which conversation a turn belongs to.
 
     `fresh` starts one; on claude the id is generated before launch and pinned,
-    on codex it is learned from the stream. `pinned` lets the caller choose the
+    on codex it is learned from the thread. `pinned` lets the caller choose the
     id and is claude-only. `resume` continues an existing one on either engine.
     """
 

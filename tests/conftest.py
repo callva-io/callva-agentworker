@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import sys
@@ -16,20 +17,29 @@ def executable_fakes():
 
 
 @pytest.fixture
-def fake_env(tmp_path):
-    """An environment whose PATH holds only the fakes, plus a file the fakes record argv to."""
-    argv_file = tmp_path / "argv.json"
-    # The fakes are python scripts that spawn `sleep`, so the interpreter's own
-    # directory and the system binaries sit behind the fakes on PATH.
+def fake_env(tmp_path, monkeypatch):
+    """The environment a turn starts from: the fakes are found first on PATH, the
+    interpreter running the suite answers their `python3` shebang, and FAKE_RECORD
+    names the file a fake writes its argv, environment and requests to."""
     path = os.pathsep.join([str(FAKES), os.path.dirname(sys.executable), "/usr/bin", "/bin"])
+    monkeypatch.setenv("PATH", path)
     env = {
         "PATH": path,
         "HOME": str(tmp_path),
-        "FAKE_ARGV_FILE": str(argv_file),
-        "CLAUDECODE": "1",
-        "KEEP_ME": "yes",
+        "FAKE_RECORD": str(tmp_path / "record.json"),
+        "FAKE_PID_FILE": str(tmp_path / "pids.json"),
     }
-    if "PYTHONPATH" in os.environ:
-        env["PYTHONPATH"] = os.environ["PYTHONPATH"]
-    env["argv_file"] = str(argv_file)
+    for name in ("PYTHONPATH", "TMPDIR"):
+        if name in os.environ:
+            env[name] = os.environ[name]
     return env
+
+
+@pytest.fixture
+def record(fake_env):
+    """What the fake engine recorded about the turn it ran."""
+    return lambda: json.loads(Path(fake_env["FAKE_RECORD"]).read_text())
+
+
+def fake(engine: str) -> str:
+    return str(FAKES / engine)

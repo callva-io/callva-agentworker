@@ -1,56 +1,130 @@
+import ast
+import inspect
+from dataclasses import fields
+from pathlib import Path
+
 import pytest
 
-from callva.agentworker import DEFAULT_DENY, EnvPolicy, Profile, ProfileError, Session
+from callva.agentworker import PROFILE_SCHEMA, Profile, ProfileError, Session
+from callva.agentworker import profile as profile_module
+
+README = (Path(__file__).parent.parent / "README.md").read_text()
+KNOBS = [f.name for f in fields(Profile)]
+
+CLAUDE_ONLY = {
+    "budget_usd": 1.0, "tools": ["Read"], "allowed_tools": ["Read"], "disallowed_tools": ["Edit"],
+    "permission_mode": "plan", "setting_sources": ["project"], "settings": {"a": 1},
+    "mcp_config": {"mcpServers": {}}, "strict_mcp": True, "add_dirs": ["/tmp"],
+    "claude_extra_args": {"x": None},
+}
+CODEX_ONLY = {
+    "codex_config": {"sandbox_mode": "read-only"}, "approval_policy": "never",
+    "service_tier": "flex", "codex_extra_args": ["--enable", "x"],
+}
 
 
-def test_from_dict_roundtrip():
-    data = {"engine": "codex", "fence": "act", "model": "gpt-x", "effort": "high",
-            "timeout_seconds": 30, "allow_tools": ["Bash(tasks:*)"], "add_dirs": ["/srv/x"],
-            "env": {"deny": ["SECRET_*"], "set": {"A": "1"}}, "extra_args": ["--flag"]}
-    profile = Profile.from_dict(data)
-    assert profile.engine == "codex" and profile.fence == "act"
-    assert profile.allow_tools == ("Bash(tasks:*)",) and profile.add_dirs == ("/srv/x",)
-    assert profile.env.deny == ("SECRET_*",) and profile.env.set == {"A": "1"}
-    again = Profile.from_dict(profile.to_dict())
-    assert again == profile
+def knob_docstrings() -> dict[str, str]:
+    tree = ast.parse(inspect.getsource(profile_module))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Profile")
+    docs, last = {}, None
+    for node in cls.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            last = node.target.id
+        elif (last and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+              and isinstance(node.value.value, str)):
+            docs[last] = node.value.value
+            last = None
+    return docs
 
 
-@pytest.mark.parametrize("bad", [
-    {"engine": "gemini"},
-    {"engine": "claude", "fence": "rw"},
-    {"engine": "claude", "timeout_seconds": 0},
-    {"engine": "claude", "budget_usd": -1},
-    {"engine": "claude", "colour": "blue"},
-    {"engine": "claude", "env": {"allow": "PATH"}},
-    {"engine": "claude", "timeout_seconds": True},
-    {},
-])
-def test_schema_refuses(bad):
-    with pytest.raises(ProfileError):
-        Profile.from_dict(bad)
+def test_every_knob_has_a_docstring_naming_both_engines():
+    docs = knob_docstrings()
+    assert set(docs) == set(KNOBS)
+    for name, doc in docs.items():
+        if name == "engine":
+            continue
+        said = doc.lower()
+        assert ("claude" in said or "both" in said) and ("codex" in said or "both" in said), name
 
 
-def test_constructor_validates_too():
-    with pytest.raises(ProfileError):
-        Profile(engine="claude", fence="everything")
+def test_every_knob_is_in_the_schema_and_the_readme():
+    assert set(PROFILE_SCHEMA["properties"]) == set(KNOBS)
+    for name in KNOBS:
+        assert f"`{name}`" in README, name
 
 
-def test_env_policy_default_drops_nested_markers():
-    env = EnvPolicy().apply({"PATH": "/x", "CLAUDECODE": "1", "CLAUDECODE_FOO": "2",
-                             "CLAUDE_CODE_ENTRYPOINT": "cli", "CLAUDE_CODE_USE_BEDROCK": "1"})
-    assert env == {"PATH": "/x", "CLAUDE_CODE_USE_BEDROCK": "1"}
-    assert DEFAULT_DENY == ("CLAUDECODE", "CLAUDECODE_*", "CLAUDE_CODE_ENTRYPOINT")
+def test_defaults_leave_the_engine_alone():
+    p = Profile(engine="claude")
+    assert p.tools is None and p.permission_mode is None and p.setting_sources is None
+    assert p.strip_session_markers is True and p.timeout_seconds == 600.0
 
 
-def test_env_policy_allow_deny_set_order():
-    policy = EnvPolicy(allow=("PATH", "APP_*"), deny=("APP_SECRET",), set={"APP_MODE": "test"})
-    env = policy.apply({"PATH": "/x", "APP_ONE": "1", "APP_SECRET": "s", "HOME": "/h"})
-    assert env == {"PATH": "/x", "APP_ONE": "1", "APP_MODE": "test"}
+@pytest.mark.parametrize("name,value", CLAUDE_ONLY.items())
+def test_claude_knobs_are_refused_on_codex(name, value):
+    Profile(engine="claude", **{name: value})
+    with pytest.raises(ProfileError, match=f"profile.{name}: codex cannot honour it"):
+        Profile(engine="codex", **{name: value})
 
 
-def test_session_kinds():
+@pytest.mark.parametrize("name,value", CODEX_ONLY.items())
+def test_codex_knobs_are_refused_on_claude(name, value):
+    Profile(engine="codex", **{name: value})
+    with pytest.raises(ProfileError, match=f"profile.{name}: claude cannot honour it"):
+        Profile(engine="claude", **{name: value})
+
+
+def test_an_empty_tools_list_is_a_claude_setting():
+    assert Profile(engine="claude", tools=[]).tools == ()
+    with pytest.raises(ProfileError, match=r"profile\.tools"):
+        Profile(engine="codex", tools=[])
+
+
+def test_hook_trust_bypass_is_refused_on_both_engines():
+    with pytest.raises(ProfileError, match="no hook-trust bypass over app-server"):
+        Profile(engine="codex", bypass_hook_trust=True)
+    with pytest.raises(ProfileError, match="claude has no hook trust"):
+        Profile(engine="claude", bypass_hook_trust=True)
+
+
+def test_fence_key_is_refused_with_the_knobs_that_replace_it():
+    with pytest.raises(ProfileError) as refused:
+        Profile.from_dict({"engine": "claude", "fence": "read"})
+    message = str(refused.value)
+    for knob in ("tools", "allowed_tools", "permission_mode", "setting_sources", "settings",
+                 "mcp_config", "strict_mcp", "codex_config", "approval_policy"):
+        assert knob in message
+
+
+@pytest.mark.parametrize("key,replacement", [
+    ("allow_tools", "allowed_tools"), ("env", "env_remove"), ("extra_args", "claude_extra_args")])
+def test_other_removed_keys_name_their_replacements(key, replacement):
+    with pytest.raises(ProfileError, match=replacement):
+        Profile.from_dict({"engine": "codex", key: []})
+
+
+def test_from_dict_builds_and_refuses_unknown_keys():
+    p = Profile.from_dict({"engine": "codex", "model": "gpt-x", "effort": "high",
+                           "codex_config": {"sandbox_mode": "workspace-write"},
+                           "approval_policy": "never", "env_set": {"A": "1"},
+                           "env_remove": ["SECRET_*"], "timeout_seconds": 30})
+    assert p.codex_config == {"sandbox_mode": "workspace-write"} and p.env_remove == ("SECRET_*",)
+    assert Profile.from_dict(p.to_dict()) == p
+    with pytest.raises(ProfileError, match="unknown key 'bogus'"):
+        Profile.from_dict({"engine": "claude", "bogus": 1})
+    with pytest.raises(ProfileError, match="must be one of"):
+        Profile.from_dict({"engine": "codex", "approval_policy": "sometimes"})
+    with pytest.raises(ProfileError, match="missing required key 'engine'"):
+        Profile.from_dict({"model": "x"})
+
+
+def test_a_variable_is_either_set_or_removed():
+    with pytest.raises(ProfileError, match="also match env_remove"):
+        Profile(engine="claude", env_set={"SECRET_A": "x"}, env_remove=["SECRET_*"])
+
+
+def test_sessions():
     assert Session.fresh().kind == "fresh"
     assert Session.pinned("abc").id == "abc"
-    assert Session.resume("abc").kind == "resume"
+    assert Session.resume("t1").kind == "resume"
     with pytest.raises(ValueError):
         Session.pinned("")
