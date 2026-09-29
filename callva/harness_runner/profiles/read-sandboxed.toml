@@ -1,0 +1,59 @@
+# Profile "read-sandboxed": a research question in a project, with the read
+# enforced by the operating system rather than by instruction.
+#
+# The run's working directory, the target project, cannot be written. The
+# network, ~/.cache and the temporary directory stay writable, so CLIs that
+# fetch, cache or build in a temporary place keep working.
+#
+# claude: Claude Code's seatbelt sandbox. `Edit(./**)` is a permission rule
+# relative to the working directory; Claude Code merges Edit deny rules into the
+# sandbox's write denials, so the target is fenced without the profile knowing
+# its path. Bash runs sandboxed without a prompt; anything that would leave the
+# sandbox asks, and a headless run cannot be asked, so it is denied. The file
+# tools that write are removed, and no MCP server is loaded.
+#
+# codex: a named permissions profile extending :read-only, with ~/.cache and the
+# temporary directory writable and the network on.
+#
+# One table per harness; the table name is the harness.
+
+[claude]
+model = "claude-opus-5-5"
+effort = "medium"
+timeout_seconds = 3600
+permission_mode = "default"
+setting_sources = ["project", "local"]
+disallowed_tools = ["Write", "Edit", "NotebookEdit"]
+strict_mcp = true
+mcp_config = { mcpServers = {} }
+append_system_prompt = "This is a READ-ONLY research query. Change nothing: no file writes or edits, no commits, and no state changes in this project or in any system you reach. Read, run read-only commands, and answer."
+env_set = { CAPABILITIES_READ_ONLY = "1" }
+
+[claude.settings.sandbox]
+enabled = true
+failIfUnavailable = true
+autoAllowBashIfSandboxed = true
+allowUnsandboxedCommands = false
+filesystem = { allowWrite = ["~/.cache"] }
+network = { allowedDomains = ["*"] }
+
+[claude.settings.permissions]
+deny = ["Write", "Edit", "NotebookEdit", "Edit(./**)"]
+ask = ["Bash"]
+disableBypassPermissionsMode = "disable"
+
+[codex]
+model = "gpt-6-sol"
+effort = "medium"
+timeout_seconds = 3600
+approval_policy = "never"
+append_system_prompt = "This is a READ-ONLY research query. Change nothing: no file writes or edits, no commits, and no state changes in this project or in any system you reach. Read, run read-only commands, and answer."
+env_set = { CAPABILITIES_READ_ONLY = "1" }
+
+[codex.codex_config]
+default_permissions = "read-sandboxed"
+
+[codex.codex_config.permissions.read-sandboxed]
+extends = ":read-only"
+filesystem = { "~/.cache" = "write", ":tmpdir" = "write" }
+network = { enabled = true }

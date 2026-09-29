@@ -12,6 +12,15 @@
 """
 
 from .binaries import Probe, find_binary, probe
+from .discovery import (
+    ProfileFile,
+    ProfileListing,
+    ProfileNotFound,
+    find_profile,
+    find_profile_file,
+    list_profiles,
+    machine_folder,
+)
 from .guard import TESTED_VERSIONS
 from .profile import (
     HARNESSES,
@@ -43,12 +52,19 @@ __all__ = [
     "Probe",
     "Profile",
     "ProfileError",
+    "ProfileFile",
+    "ProfileListing",
+    "ProfileNotFound",
     "Result",
     "Session",
     "Tokens",
     "__version__",
     "find_binary",
+    "find_profile",
+    "find_profile_file",
+    "list_profiles",
     "load_profile_schema",
+    "machine_folder",
     "probe",
     "run",
     "validate_profile",

@@ -8,7 +8,7 @@ One turn: a prompt goes in, a harness runs to its end or its deadline, one `Resu
 
 ### Non-goals
 
-It does not schedule, queue, retry, or loop. It holds no ledger, no session store, no conversation memory. It renders no progress; it hands events to a callback and the caller renders. It does not know what a task, a message or a job is. It ships no presets and no fences: it never decides what a turn may do. Presets belong to consumers.
+It does not schedule, queue, retry, or loop. It holds no ledger, no session store, no conversation memory. It renders no progress; it hands events to a callback and the caller renders. It does not know what a task, a message or a job is. It never decides what a turn may do: the profile does. It ships three reusable profiles as package data, which a caller chooses by name and can shadow with its own.
 
 ## 2. Names
 
@@ -41,6 +41,12 @@ Hook trust on codex is a knob that is refused on both harnesses. Over `app-serve
 Both SDKs merge the profile's variables over the environment the Python process has, and neither can remove one. The library therefore puts a launcher of its own where the SDK expects the CLI: a two-line shell script that runs `_launcher.py` with `python -I -S`, which removes the variables the turn removes and `exec`s the real CLI. What reaches the launcher is a spec of names and paths; a variable's value only ever travels through the SDK's own env option.
 
 The harness's environment is the caller's `environ` (this process's by default), with the profile's `env_remove` globs and, unless `strip_session_markers` is false, `SESSION_MARKERS` removed, and with `env_set` and the call's `extra_env` set on top. A variable in `env_set` is never removed, and a profile that both sets and removes one name is refused. On claude the variables the SDK itself sets for the CLI (its entrypoint, its version, its session-state flag, `PWD`) are the SDK's values and are not removed.
+
+### Profiles by name
+
+A profile file is TOML with one table per harness (`[claude]`, `[codex]`); the table name is the harness, a `harness` key inside may be left out and must match when present, and nothing else may sit at the top of the file. A name resolves to the first `NAME.toml` in the caller's folders (in the order given), then the machine folder (`$XDG_CONFIG_HOME/callva-harness-runner/profiles`, else `~/.config/...`), then the shipped profiles, read with `importlib.resources` so they need no install step. The file found is used whole; a found file without the requested harness's table is an error and does not fall through, because a name that silently resolved to another source's profile would run with a fence nobody chose. Names are one plain file-name segment, so a name can never climb out of a folder.
+
+The shipped profiles are `read`, `act` and `read-sandboxed`. Each is a change to what a run does, so each is proven by a live run on both harnesses before a release that changes it. `read-sandboxed` fences the working directory on claude with the permission rule `Edit(./**)`: Claude Code resolves a `./` rule against the working directory and merges Edit deny rules into the sandbox's write denials, while a sandbox `denyWrite` path resolves against the settings root (for inline `--settings`, the session's temporary directory), so `denyWrite: ["."]` fences the wrong place. Measured on Claude Code 2.1.280: with `Edit(./**)` a write in the target and in its subdirectories is blocked, and a write beside the target, in the temporary directory and in `~/.cache` is allowed, exactly as with the target's absolute path.
 
 ## 5. Session
 
@@ -100,7 +106,7 @@ The cost claude reports is its own estimate and includes subagents; a turn that 
 
 ## 12. Versioning
 
-SemVer with the 0.x rule: the minor is the breaking position. A changed field meaning, a removed knob or a changed default is a minor; an added result field, an added knob whose default leaves the harness alone, or a widened tested range is a patch. `callva/harness_runner/version.py` is the one home of the number.
+The major stays 0. A breaking change or a new feature bumps the minor; a fix bumps the patch. A changed shipped profile is a change to what a run does, so it is at least a minor. `callva/harness_runner/version.py` is the one home of the number.
 
 ## 13. Later
 
