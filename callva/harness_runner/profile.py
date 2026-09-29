@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, fields
 from importlib import resources
 from typing import Any
 
+from .renamed import refuse_attribute, refuse_module_attribute
+
 HARNESSES = ("claude", "codex")
 
 # Variables a running Claude Code session sets in the environment of everything
@@ -211,6 +213,9 @@ class Profile:
             data[f.name] = value
         return data
 
+    def __getattr__(self, name: str):
+        raise refuse_attribute("Profile", name)
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Profile:
         """Build a profile from configuration, refusing unknown and 0.1.x keys by name."""
@@ -360,3 +365,7 @@ def validate_profile(data: Mapping[str, Any]) -> None:
     if not isinstance(data, Mapping):
         raise ProfileError("profile: expected an object")
     _validate(data, PROFILE_SCHEMA, "profile")
+
+
+def __getattr__(name: str):
+    raise refuse_module_attribute(__name__, name)

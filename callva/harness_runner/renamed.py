@@ -15,6 +15,17 @@ def renamed(old: str, owner: str = "") -> str:
     return f"{prefix}{old} was renamed {prefix}{RENAMED[old]} in 0.3.0"
 
 
+def refuse_module_attribute(module: str, name: str) -> Exception:
+    """What a module's `__getattr__` raises for `name`.
+
+    A renamed name raises ImportError: `from module import OLD` turns an
+    AttributeError into a generic "cannot import name" and loses the message,
+    while an ImportError reaches the caller as it was raised."""
+    if name in RENAMED:
+        return ImportError(renamed(name, module), name=module)
+    return AttributeError(f"module {module!r} has no attribute {name!r}")
+
+
 def refuse_attribute(owner: str, name: str) -> AttributeError:
     if name in RENAMED:
         return AttributeError(renamed(name, owner))

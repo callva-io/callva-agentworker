@@ -43,9 +43,26 @@ def test_the_failure_kind_refuses_its_old_name_and_value():
 def test_the_package_and_probe_refuse_their_old_names():
     assert harness_runner.HARNESSES == ("claude", "codex")
     refused = "ENGINES was renamed callva.harness_runner.HARNESSES"
-    with pytest.raises(AttributeError, match=re.escape(refused)):
+    with pytest.raises(ImportError, match=re.escape(refused)):
         _ = harness_runner.ENGINES
     with pytest.raises(AttributeError, match=re.escape("Probe.engine was renamed Probe.harness")):
         _ = Probe("claude", False).engine
     with pytest.raises(AttributeError, match="has no attribute 'nothing'"):
         _ = harness_runner.nothing
+
+
+@pytest.mark.parametrize("module", ["callva.harness_runner", "callva.harness_runner.profile"])
+def test_a_from_import_of_an_old_name_keeps_the_rename_message(module):
+    refused = f"{module}.ENGINES was renamed {module}.HARNESSES in 0.3.0"
+    with pytest.raises(ImportError, match=re.escape(refused)):
+        exec(f"from {module} import ENGINES")
+    with pytest.raises(ImportError, match="cannot import name 'nothing'"):
+        exec(f"from {module} import nothing")
+
+
+def test_the_profile_refuses_its_old_field():
+    profile = Profile.from_dict({"harness": "claude"})
+    refused = "Profile.engine was renamed Profile.harness in 0.3.0"
+    with pytest.raises(AttributeError, match=re.escape(refused)):
+        _ = profile.engine
+    assert not hasattr(profile, "nothing")
