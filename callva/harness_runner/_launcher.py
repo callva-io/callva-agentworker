@@ -1,15 +1,15 @@
-"""The launcher the library puts in front of an engine CLI.
+"""The launcher the library puts in front of a harness CLI.
 
 The SDKs start the CLI themselves and only ever add to the environment they
 inherit. This script sits where the SDK expects the CLI, and on every start:
 removes the variables the profile removes, records its pid and argv when this
-is the turn's engine and not a version probe, starts a new session so the
-engine and everything it starts can be killed as one, refuses to start when the
+is the turn's harness and not a version probe, starts a new session so the
+harness and everything it starts can be killed as one, refuses to start when the
 turn has already been stopped, and then becomes the real CLI.
 
 It runs with `python -I -S` and imports nothing from the package, so it starts
 fast and the package's dependencies never load in it. It takes one argument
-before the engine's own: the path of the spec the library wrote for this turn.
+before the harness's own: the path of the spec the library wrote for this turn.
 The spec holds names and paths only, never a variable's value.
 """
 
@@ -34,7 +34,7 @@ def main() -> None:
     }
     if spec["marker"] in argv:
         # Recorded before the stop check: the library writes the stop file before
-        # it reads this record, so an engine is either recorded in time to be
+        # it reads this record, so a harness is either recorded in time to be
         # killed or sees the stop file and never starts.
         with open(spec["pidfile"], "a") as fh:
             fh.write(json.dumps({"pid": os.getpid(), "argv": [spec["binary"], *argv]}) + "\n")

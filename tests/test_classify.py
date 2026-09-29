@@ -1,7 +1,7 @@
 import json
 
-from callva.agentworker import FailureKind
-from callva.agentworker.classify import classify, unwrap_engine_message
+from callva.harness_runner import FailureKind
+from callva.harness_runner.classify import classify, unwrap_harness_message
 
 
 def test_quota_before_model_refusal():
@@ -36,13 +36,13 @@ def test_subtypes_flags_and_fallbacks():
 def test_unwrap_nested_provider_error():
     inner = json.dumps({"error": {"message": "inner sentence"}})
     wrapped = json.dumps({"error": {"message": inner}})
-    assert unwrap_engine_message(wrapped) == "inner sentence"
-    assert unwrap_engine_message("plain") == "plain"
-    assert unwrap_engine_message('{"message": "top"}') == "top"
+    assert unwrap_harness_message(wrapped) == "inner sentence"
+    assert unwrap_harness_message("plain") == "plain"
+    assert unwrap_harness_message('{"message": "top"}') == "top"
 
 
 def test_codex_error_info_names_the_kind_or_the_status():
-    from callva.agentworker.codex import error_info_kind
+    from callva.harness_runner.codex import error_info_kind
 
     assert error_info_kind({"codexErrorInfo": "usageLimitExceeded"}) == (FailureKind.QUOTA, None)
     assert error_info_kind({"codexErrorInfo": "rateLimitExceeded"})[0] == FailureKind.QUOTA

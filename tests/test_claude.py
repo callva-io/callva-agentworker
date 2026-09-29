@@ -3,11 +3,11 @@ import json
 import pytest
 from conftest import fake
 
-from callva.agentworker import FailureKind, Profile, Session, run
+from callva.harness_runner import FailureKind, Profile, Session, run
 
 
 def claude(**knobs) -> Profile:
-    return Profile(engine="claude", **{"cli_path": fake("claude"), "timeout_seconds": 20, **knobs})
+    return Profile(harness="claude", **{"cli_path": fake("claude"), "timeout_seconds": 20, **knobs})
 
 
 def flag(argv, name):
@@ -78,7 +78,7 @@ def test_success_reads_everything(fake_env, tmp_path):
     assert result.num_turns == 3 and result.duration_ms == 1234
     assert (result.tokens.input, result.tokens.output) == (100, 20)
     assert (result.tokens.cache_read, result.tokens.cache_creation) == (50, 5)
-    assert result.permission_denials == () and result.engine_version == "2.1.280"
+    assert result.permission_denials == () and result.harness_version == "2.1.280"
     assert result.raw["subtype"] == "success"
     assert result.command[0].endswith("fakes/claude")
     assert events[0]["subtype"] == "init" and events[0]["apiKeySource"] == "none"
@@ -126,14 +126,14 @@ def test_failures_map_to_their_kind(fake_env, tmp_path, mode, kind):
     assert result.failure.message
 
 
-def test_failure_keeps_the_engine_sentence(fake_env, tmp_path):
+def test_failure_keeps_the_harness_sentence(fake_env, tmp_path):
     result = run("x", claude(), tmp_path, environ={**fake_env, "FAKE_CLAUDE": "budget"})
     assert result.failure.message == "Reached maximum budget ($0.0001)"
     refused = run("x", claude(), tmp_path, environ={**fake_env, "FAKE_CLAUDE": "badmodel"})
     assert refused.failure.message.startswith("API error 404: There's an issue with the selected")
 
 
-def test_a_login_the_engine_keeps_retrying_is_not_authenticated(fake_env, tmp_path):
+def test_a_login_the_harness_keeps_retrying_is_not_authenticated(fake_env, tmp_path):
     result = run("x", claude(timeout_seconds=3), tmp_path,
                  environ={**fake_env, "FAKE_CLAUDE": "retry401"})
     assert result.failure.kind == FailureKind.NOT_AUTHENTICATED

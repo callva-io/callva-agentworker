@@ -1,4 +1,4 @@
-"""Read what an engine said about a failure and name its kind.
+"""Read what a harness said about a failure and name its kind.
 
 The regexes and the unwrapping were first written for a messaging daemon that
 had to tell a spent subscription from a wrong answer; they are kept here with
@@ -45,8 +45,8 @@ SUBTYPE_KINDS = {
 }
 
 
-def unwrap_engine_message(text: str | None) -> str:
-    """The sentence inside an engine error, when the engine wrapped one.
+def unwrap_harness_message(text: str | None) -> str:
+    """The sentence inside a harness error, when the harness wrapped one.
 
     Codex forwards the provider's HTTP error verbatim, so `message` is often a
     JSON document whose own `error.message` is the only part a person can read.
@@ -100,11 +100,11 @@ def classify(
 ) -> FailureKind:
     """Name the kind of a failure from what is known about it.
 
-    `http_status` is the status the engine reports for a provider error, when
+    `http_status` is the status the harness reports for a provider error, when
     it reports one; it is read before the sentence, because a 429 with a
     phrase-free message is still a spent quota. `had_report` is false when the
-    process ended without the engine's own result document, which is the one
-    case where nothing the engine said can be read and the kind is `crash`.
+    process ended without the harness's own result document, which is the one
+    case where nothing the harness said can be read and the kind is `crash`.
     """
     if cancelled:
         return FailureKind.CANCELLED

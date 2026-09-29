@@ -1,11 +1,11 @@
 import pytest
 from conftest import fake
 
-from callva.agentworker import FailureKind, Profile, Session, run
+from callva.harness_runner import FailureKind, Profile, Session, run
 
 
 def codex(**knobs) -> Profile:
-    return Profile(engine="codex", **{"cli_path": fake("codex"), "timeout_seconds": 20, **knobs})
+    return Profile(harness="codex", **{"cli_path": fake("codex"), "timeout_seconds": 20, **knobs})
 
 
 def requests(record, method):
@@ -57,7 +57,7 @@ def test_success_reads_everything(fake_env, tmp_path):
     assert result.ok and result.answer == "codex answer to: What is up?"
     assert result.session_id and result.model == "gpt-x" and result.cost_usd is None
     assert (result.tokens.input, result.tokens.output, result.tokens.cache_read) == (100, 20, 50)
-    assert result.duration_ms == 3683 and result.engine_version == "0.159.0"
+    assert result.duration_ms == 3683 and result.harness_version == "0.159.0"
     assert result.raw["turn"]["status"] == "completed"
     assert events[-1]["method"] == "turn/completed"
 

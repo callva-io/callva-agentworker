@@ -89,7 +89,7 @@ def hang():
     time.sleep(0.5)
     if pid_file:
         with open(pid_file, "w") as fh:
-            json.dump({"engine": os.getpid(), "tool": tool.pid}, fh)
+            json.dump({"harness": os.getpid(), "tool": tool.pid}, fh)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     while True:
         time.sleep(1)

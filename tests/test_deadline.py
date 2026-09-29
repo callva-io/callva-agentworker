@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from conftest import fake
 
-from callva.agentworker import FailureKind, Profile, run
-from callva.agentworker.tree import find_tree
+from callva.harness_runner import FailureKind, Profile, run
+from callva.harness_runner.tree import find_tree
 
 
 def alive(pid: int) -> bool:
@@ -22,10 +22,10 @@ def alive(pid: int) -> bool:
 
 
 def tree_pids(pid_file: str) -> list[int]:
-    """The engine, its tool command, and everything the tool command started, found by
+    """The harness, its tool command, and everything the tool command started, found by
     the process group the tool command made for itself."""
     pids = json.loads(Path(pid_file).read_text())
-    return [pids["engine"], *sorted(find_tree([pids["tool"]]))]
+    return [pids["harness"], *sorted(find_tree([pids["tool"]]))]
 
 
 def wait_for(path: str, seconds: float = 10.0) -> None:
@@ -34,9 +34,9 @@ def wait_for(path: str, seconds: float = 10.0) -> None:
         time.sleep(0.05)
 
 
-@pytest.mark.parametrize("engine", ["claude", "codex"])
-def test_deadline_kills_the_whole_tree(fake_env, tmp_path, engine):
-    env = {**fake_env, f"FAKE_{engine.upper()}": "hang"}
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+def test_deadline_kills_the_whole_tree(fake_env, tmp_path, harness):
+    env = {**fake_env, f"FAKE_{harness.upper()}": "hang"}
     seen: list[int] = []
 
     def watch():
@@ -47,22 +47,22 @@ def test_deadline_kills_the_whole_tree(fake_env, tmp_path, engine):
     watcher = threading.Thread(target=watch)
     watcher.start()
     started = time.monotonic()
-    result = run("x", Profile(engine=engine, cli_path=fake(engine), timeout_seconds=3), tmp_path,
+    result = run("x", Profile(harness=harness, cli_path=fake(harness), timeout_seconds=3), tmp_path,
                  environ=env)
     watcher.join()
     assert result.failure.kind == FailureKind.TIMEOUT
     assert "timed out after 3s" in result.failure.message
-    # The engine ignores SIGTERM, so ending it took the SIGKILL after the grace period.
+    # The harness ignores SIGTERM, so ending it took the SIGKILL after the grace period.
     assert time.monotonic() - started < 15
-    # The engine, the tool shell, its background child and the double-forked grandchild.
+    # The harness, the tool shell, its background child and the double-forked grandchild.
     assert len(seen) >= 4, seen
     time.sleep(0.5)
     assert [p for p in seen if alive(p)] == []
 
 
-@pytest.mark.parametrize("engine", ["claude", "codex"])
-def test_cancel_ends_the_turn_and_kills_the_tree(fake_env, tmp_path, engine):
-    env = {**fake_env, f"FAKE_{engine.upper()}": "hang"}
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+def test_cancel_ends_the_turn_and_kills_the_tree(fake_env, tmp_path, harness):
+    env = {**fake_env, f"FAKE_{harness.upper()}": "hang"}
     cancel = threading.Event()
     seen: list[int] = []
 
@@ -73,7 +73,7 @@ def test_cancel_ends_the_turn_and_kills_the_tree(fake_env, tmp_path, engine):
         cancel.set()
 
     threading.Thread(target=later).start()
-    result = run("x", Profile(engine=engine, cli_path=fake(engine), timeout_seconds=60),
+    result = run("x", Profile(harness=harness, cli_path=fake(harness), timeout_seconds=60),
                  tmp_path, environ=env, cancel=cancel)
     assert result.failure.kind == FailureKind.CANCELLED
     time.sleep(0.5)

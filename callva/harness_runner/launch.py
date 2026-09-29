@@ -1,4 +1,4 @@
-"""The launcher in front of the engine CLI: what it removes, and what it records."""
+"""The launcher in front of the harness CLI: what it removes, and what it records."""
 
 from __future__ import annotations
 
@@ -23,14 +23,14 @@ CLAUDE_SDK_OWNED = (
     "PWD",
 )
 
-# The argument that marks the engine's own start, as opposed to a version probe
+# The argument that marks the harness's own start, as opposed to a version probe
 # the SDK runs through the same path first.
 MARKERS = {"claude": "--input-format", "codex": "app-server"}
 
 
 @dataclass(frozen=True)
 class EnvPlan:
-    """What the engine's environment is, split into what the SDK can express
+    """What the harness's environment is, split into what the SDK can express
     (values to set) and what only the launcher can (names to remove)."""
 
     set: dict[str, str]
@@ -65,16 +65,16 @@ class Launch:
     """One turn's launcher: a private directory holding the wrapper, its spec,
     the record of what started, and the stop file."""
 
-    def __init__(self, engine: str, binary: str, plan: EnvPlan) -> None:
-        self.engine = engine
-        self.dir = Path(tempfile.mkdtemp(prefix=f"agentworker-{engine}-"))
+    def __init__(self, harness: str, binary: str, plan: EnvPlan) -> None:
+        self.harness = harness
+        self.dir = Path(tempfile.mkdtemp(prefix=f"harness-{harness}-"))
         self.pidfile = self.dir / "started.jsonl"
         self.stopfile = self.dir / "stop"
         self.specfile = self.dir / "spec.json"
-        self.wrapper = self.dir / engine
+        self.wrapper = self.dir / harness
         spec = {
             "binary": binary,
-            "marker": MARKERS[engine],
+            "marker": MARKERS[harness],
             "keep": list(plan.keep),
             "remove_names": list(plan.remove_names),
             "remove_patterns": list(plan.remove_patterns),
@@ -91,7 +91,7 @@ class Launch:
         self.wrapper.chmod(0o700)
 
     def started(self) -> list[dict]:
-        """Every engine start the launcher recorded, oldest first."""
+        """Every harness start the launcher recorded, oldest first."""
         try:
             lines = self.pidfile.read_text().splitlines()
         except OSError:
@@ -103,7 +103,7 @@ class Launch:
         return records
 
     def stop(self) -> list[int]:
-        """Refuse any later start, then name the engine processes that did start."""
+        """Refuse any later start, then name the harness processes that did start."""
         self.stopfile.touch()
         return [int(r["pid"]) for r in self.started() if "pid" in r]
 

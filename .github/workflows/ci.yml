@@ -27,7 +27,7 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
-      # The suite runs on fake engines placed on PATH; no real claude or codex is
+      # The suite runs on fake harnesses placed on PATH; no real claude or codex is
       # needed and no credential is read. The one live smoke lives outside CI.
       - name: Test
         run: uv run pytest -q

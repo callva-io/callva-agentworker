@@ -1,13 +1,26 @@
-# callva-agentworker
+# callva-harness-runner
 
-One headless turn of a coding agent, as a Python library. It runs Claude Code through Anthropic's `claude-agent-sdk` or Codex through OpenAI's `openai-codex`, always against the CLI installed on the machine, configured only by a profile of explicit knobs. It keeps the turn under a deadline that kills everything the engine started, reads what the engine reported, and hands back one result with the failure named. It ships no presets and no fences: what a turn may do is whatever its profile says, and nothing else.
+One run of an agent harness, as a Python library. A harness is the vendor's agent runtime: Claude Code, driven through Anthropic's `claude-agent-sdk`, or the Codex CLI, driven through OpenAI's `openai-codex`, always the CLI installed on the machine. A profile is one harness configuration, a flat set of explicit knobs. A run is one turn: a prompt goes in, the harness works to its end or its deadline, and one `Result` comes out, with the failure named. The deadline kills everything the harness started. The library ships no presets and no fences: what a run may do is whatever its profile says, and nothing else.
 
-`DESIGN.md` is the contract.
+`DESIGN.md` is the contract. The source is at https://github.com/callva-io/harness-runner.
+
+Formerly `callva-agentworker`, whose last release is 0.2.0. The 0.3.0 renames, with no aliases (each old name is refused with a message naming the new one):
+
+| 0.2.0 | 0.3.0 |
+|---|---|
+| distribution `callva-agentworker` | `callva-harness-runner` |
+| import `callva.agentworker` | `callva.harness_runner` |
+| profile knob `engine` | `harness` |
+| `Result.engine` | `Result.harness` |
+| `Result.engine_version` | `Result.harness_version` |
+| failure kind `incompatible_engine` (`FailureKind.INCOMPATIBLE_ENGINE`) | `incompatible_harness` (`FailureKind.INCOMPATIBLE_HARNESS`) |
+| `ENGINES` | `HARNESSES` |
+| `Probe.engine` | `Probe.harness` |
 
 ## Install
 
 ```
-pip install callva-agentworker
+pip install callva-harness-runner
 ```
 
 It depends on `claude-agent-sdk==0.2.161` and `openai-codex==0.159.0`, pinned exactly; together they add about 0.5 GB, most of it the CLIs both SDKs bundle. The bundled CLIs are never run: the library always runs the CLI installed on the machine.
@@ -16,14 +29,14 @@ In a PEP 723 script, pin the exact version so nothing outside the script's own r
 
 ```python
 # /// script
-# dependencies = ["callva-agentworker==0.2.0"]
+# dependencies = ["callva-harness-runner==0.3.0"]
 # ///
 ```
 
 ## Use
 
 ```python
-from callva.agentworker import Profile, Session, run
+from callva.harness_runner import Profile, Session, run
 
 profile = Profile.from_dict(config["profile"])   # your configuration, your knobs
 result = run("Summarise README.md in one line.", profile, cwd="/path/to/project")
@@ -33,23 +46,23 @@ else:
     print(result.failure.kind, result.failure.message)
 ```
 
-`run()` never raises for anything the engine did. Every ending is a `Result`; `result.failure.kind` says what kind, and `result.failure.message` carries the engine's own sentence. It raises `ValueError` only for a request it cannot express, such as a pinned session on codex.
+`run()` never raises for anything the harness did. Every ending is a `Result`; `result.failure.kind` says what kind, and `result.failure.message` carries the harness's own sentence. It raises `ValueError` only for a request it cannot express, such as a pinned session on codex.
 
 `run(prompt, profile, cwd, *, session=None, environ=None, extra_env=None, on_event=None, cancel=None, stderr_tail=40)`:
 
 - `session`: `Session.fresh()` (the default), `Session.pinned(id)` or `Session.resume(id)`, below.
-- `environ`: the environment the engine starts from; this process's by default. A variable absent from it is absent in the engine, even though both SDKs inherit this process's environment.
+- `environ`: the environment the harness starts from; this process's by default. A variable absent from it is absent in the harness, even though both SDKs inherit this process's environment.
 - `extra_env`: variables set on top of `environ` and the profile's `env_set`.
-- `on_event`: called with one dict per engine event while the turn runs. On claude it is the SDK's message: a system message is the engine's own event (`subtype` `init` carries `apiKeySource`, `model` and `claude_code_version`), any other message is its fields plus `type`, the SDK class name. On codex it is `{"method", "params"}`, one app-server notification.
+- `on_event`: called with one dict per harness event while the turn runs. On claude it is the SDK's message: a system message is the harness's own event (`subtype` `init` carries `apiKeySource`, `model` and `claude_code_version`), any other message is its fields plus `type`, the SDK class name. On codex it is `{"method", "params"}`, one app-server notification.
 - `cancel`: a `threading.Event`; setting it ends the turn and kills its processes.
 
 ## Profile
 
-A profile is a flat set of explicit knobs. There is no inheritance, no preset and no fence. A knob left at its default leaves the engine's own default in place. A knob one engine cannot honour is refused for that engine with a `ProfileError` when the profile is built, never ignored while it runs. Each knob's docstring on `Profile` says what it does on each engine; `PROFILE_SCHEMA` (shipped as `profile.schema.json`) validates a profile kept in configuration, and `Profile.from_dict` refuses unknown keys.
+A profile is a flat set of explicit knobs. There is no inheritance, no preset and no fence. A knob left at its default leaves the harness's own default in place. A knob one harness cannot honour is refused for that harness with a `ProfileError` when the profile is built, never ignored while it runs. Each knob's docstring on `Profile` says what it does on each harness; `PROFILE_SCHEMA` (shipped as `profile.schema.json`) validates a profile kept in configuration, and `Profile.from_dict` refuses unknown keys.
 
 | Knob | claude | codex |
 |---|---|---|
-| `engine` | `claude` | `codex` |
+| `harness` | `claude` | `codex` |
 | `cli_path` | the CLI the SDK launches; `None` finds the installed `claude` | the binary whose `app-server` the SDK talks to; `None` finds the installed `codex` |
 | `model` | `--model` | the thread's model |
 | `effort` | `--effort` | the turn's reasoning effort |
@@ -67,8 +80,8 @@ A profile is a flat set of explicit knobs. There is no inheritance, no preset an
 | `append_system_prompt` | appended to the Claude Code system prompt | the thread's developer instructions |
 | `output_schema` | `--json-schema` | the turn's output schema |
 | `name` | `--name` | the thread's name |
-| `env_set` | set in the engine's environment | the same |
-| `env_remove` | names or globs removed from what the engine inherits | the same |
+| `env_set` | set in the harness's environment | the same |
+| `env_remove` | names or globs removed from what the harness inherits | the same |
 | `strip_session_markers` | also remove `SESSION_MARKERS`; default true | the same |
 | `codex_config` | refused: use `settings` | the thread's config, keyed as in `config.toml`: permission profiles, `sandbox_mode`, network, `mcp_servers` |
 | `approval_policy` | refused: use `permission_mode` | `never` (escalations refused) or `auto_review` (codex's reviewer decides); `None` is the SDK default, `auto_review` |
@@ -77,34 +90,34 @@ A profile is a flat set of explicit knobs. There is no inheritance, no preset an
 | `claude_extra_args` | extra CLI flags, `{"flag": "value"}` or `{"flag": None}` | refused |
 | `codex_extra_args` | refused | arguments before `app-server`, such as `["-c", "key=value"]` |
 
-Claude always runs on the `claude_code` system-prompt preset, so a turn has the same prompt `claude -p` has; the library never replaces either engine's system prompt, and `append_system_prompt` only adds to it.
+Claude always runs on the `claude_code` system-prompt preset, so a turn has the same prompt `claude -p` has; the library never replaces either harness's system prompt, and `append_system_prompt` only adds to it.
 
 ### Environment
 
-Both SDKs only add to the environment they inherit. To remove a variable for real, the library puts a small launcher of its own in front of the CLI: the SDK starts the launcher, the launcher removes what the profile removes and becomes the CLI. The launcher learns names, never values. `SESSION_MARKERS` are the variables a running Claude Code session leaves in its children (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_EFFORT`, `AI_AGENT` and the rest); a child engine that inherits them believes it runs inside that session, so they are removed unless `strip_session_markers` is false. On claude the values the SDK itself sets for the CLI, such as its entrypoint, stay.
+Both SDKs only add to the environment they inherit. To remove a variable for real, the library puts a small launcher of its own in front of the CLI: the SDK starts the launcher, the launcher removes what the profile removes and becomes the CLI. The launcher learns names, never values. `SESSION_MARKERS` are the variables a running Claude Code session leaves in its children (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_EFFORT`, `AI_AGENT` and the rest); a child harness that inherits them believes it runs inside that session, so they are removed unless `strip_session_markers` is false. On claude the values the SDK itself sets for the CLI, such as its entrypoint, stay.
 
 ### Deadline and cancel
 
-The launcher makes the engine a session leader. When the deadline passes, or `cancel` is set, no further engine start is allowed, and the engine, every process it started, and everything those left behind in their process group or session are sent SIGTERM and then SIGKILL, grandchildren included. A caller that is itself killed cannot do this, and the engine's tree then outlives it.
+The launcher makes the harness a session leader. When the deadline passes, or `cancel` is set, no further harness start is allowed, and the harness, every process it started, and everything those left behind in their process group or session are sent SIGTERM and then SIGKILL, grandchildren included. A caller that is itself killed cannot do this, and the harness's tree then outlives it.
 
 ## Harness guard
 
-`TESTED_VERSIONS` holds, per engine, the range of CLI versions this release was tested with: claude 2.1.280 to 2.1.284, codex 0.159.0. Before a turn the library reads the installed CLI's `--version`:
+`TESTED_VERSIONS` holds, per harness, the range of CLI versions this release was tested with: claude 2.1.280 to 2.1.284, codex 0.159.0. Before a turn the library reads the installed CLI's `--version`:
 
-- older than the range: the turn is refused with failure kind `incompatible_engine`, and the message names the installed version and the tested one;
+- older than the range: the turn is refused with failure kind `incompatible_harness`, and the message names the installed version and the tested one;
 - newer than the range: the turn runs, and `result.warnings` names both versions;
 - no CLI: `binary_missing`, as before.
 
 ## Session
 
-`Session.fresh()` starts a conversation; on claude the id is chosen before launch so a killed turn is still addressable, on codex it is the thread id the app-server gives. `Session.resume(id)` continues one on either engine. `Session.pinned(id)` chooses the id and is claude-only.
+`Session.fresh()` starts a conversation; on claude the id is chosen before launch so a killed turn is still addressable, on codex it is the thread id the app-server gives. `Session.resume(id)` continues one on either harness. `Session.pinned(id)` chooses the id and is claude-only.
 
 ## Result
 
 | Field | Meaning |
 |---|---|
-| `ok` | the engine confirmed a completed turn with an answer |
-| `engine` | `claude` or `codex` |
+| `ok` | the harness confirmed a completed turn with an answer |
+| `harness` | `claude` or `codex` |
 | `answer` | the final text |
 | `structured` | the parsed answer when `output_schema` was given |
 | `session_id` | claude session id or codex thread id, set whenever known, including after a kill |
@@ -113,19 +126,23 @@ The launcher makes the engine a session leader. When the deadline passes, or `ca
 | `duration_ms`, `num_turns` | as reported; `num_turns` is `None` on codex |
 | `tokens` | `input`, `output`, `cache_read`, `cache_creation` for this turn |
 | `permission_denials` | claude's list; empty on codex |
-| `failure` | `None` when `ok`; else `kind` and the engine's own `message` |
+| `failure` | `None` when `ok`; else `kind` and the harness's own `message` |
 | `exit_code` | the exit code the claude SDK reported for a failed process, else `None` |
-| `stderr_tail` | the engine's last stderr lines, for a person |
+| `stderr_tail` | the harness's last stderr lines, for a person |
 | `command` | the CLI command line the launcher started |
 | `raw` | claude's result message, or codex's `{"turn", "items", "errors"}` |
-| `engine_version` | the installed CLI version the guard read |
+| `harness_version` | the installed CLI version the guard read |
 | `warnings` | the guard's warning when the CLI is newer than tested |
 
 ### Failure kinds
 
-`quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`, `incompatible_engine`. The engine's own verdict is read first (claude's result subtype, codex's `codexErrorInfo`), then an HTTP status it reports, then its sentence: a spent quota before a refused model, because a subscription spent on one model says both and only one of them is a pause. A claude turn that times out while the engine is retrying a 401 or a 429 is `not_authenticated` or `quota`. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
+`quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`, `incompatible_harness`. The harness's own verdict is read first (claude's result subtype, codex's `codexErrorInfo`), then an HTTP status it reports, then its sentence: a spent quota before a refused model, because a subscription spent on one model says both and only one of them is a pause. A claude turn that times out while the harness is retrying a 401 or a 429 is `not_authenticated` or `quota`. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
 
 ## Changelog
+
+### 0.3.0
+
+The library is renamed and speaks of harnesses, profiles and runs; its behaviour is exactly 0.2.0's. What a 0.2.0 consumer must change: depend on `callva-harness-runner` and import `callva.harness_runner`; write `harness` where a profile said `engine`; read `Result.harness` and `Result.harness_version`; branch on `incompatible_harness`; import `HARNESSES`. The table at the top maps every old name.
 
 ### 0.2.0
 
@@ -143,7 +160,7 @@ Unchanged: `Profile.from_dict`, `Session.fresh`, `Session.pinned`, `Session.resu
 
 ## Versioning
 
-SemVer with the 0.x rule: the minor is the breaking position. A changed field meaning, a removed knob or a changed default is a minor; an added result field, an added knob whose default leaves the engine alone, or a widened tested range is a patch.
+SemVer with the 0.x rule: the minor is the breaking position. A changed field meaning, a removed knob or a changed default is a minor; an added result field, an added knob whose default leaves the harness alone, or a widened tested range is a patch.
 
 ## License
 

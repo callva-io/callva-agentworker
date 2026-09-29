@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from callva.agentworker import PROFILE_SCHEMA, Profile, ProfileError, Session
-from callva.agentworker import profile as profile_module
+from callva.harness_runner import PROFILE_SCHEMA, Profile, ProfileError, Session
+from callva.harness_runner import profile as profile_module
 
 README = (Path(__file__).parent.parent / "README.md").read_text()
 KNOBS = [f.name for f in fields(Profile)]
@@ -37,11 +37,11 @@ def knob_docstrings() -> dict[str, str]:
     return docs
 
 
-def test_every_knob_has_a_docstring_naming_both_engines():
+def test_every_knob_has_a_docstring_naming_both_harnesses():
     docs = knob_docstrings()
     assert set(docs) == set(KNOBS)
     for name, doc in docs.items():
-        if name == "engine":
+        if name == "harness":
             continue
         said = doc.lower()
         assert ("claude" in said or "both" in said) and ("codex" in said or "both" in said), name
@@ -53,42 +53,42 @@ def test_every_knob_is_in_the_schema_and_the_readme():
         assert f"`{name}`" in README, name
 
 
-def test_defaults_leave_the_engine_alone():
-    p = Profile(engine="claude")
+def test_defaults_leave_the_harness_alone():
+    p = Profile(harness="claude")
     assert p.tools is None and p.permission_mode is None and p.setting_sources is None
     assert p.strip_session_markers is True and p.timeout_seconds == 600.0
 
 
 @pytest.mark.parametrize("name,value", CLAUDE_ONLY.items())
 def test_claude_knobs_are_refused_on_codex(name, value):
-    Profile(engine="claude", **{name: value})
+    Profile(harness="claude", **{name: value})
     with pytest.raises(ProfileError, match=f"profile.{name}: codex cannot honour it"):
-        Profile(engine="codex", **{name: value})
+        Profile(harness="codex", **{name: value})
 
 
 @pytest.mark.parametrize("name,value", CODEX_ONLY.items())
 def test_codex_knobs_are_refused_on_claude(name, value):
-    Profile(engine="codex", **{name: value})
+    Profile(harness="codex", **{name: value})
     with pytest.raises(ProfileError, match=f"profile.{name}: claude cannot honour it"):
-        Profile(engine="claude", **{name: value})
+        Profile(harness="claude", **{name: value})
 
 
 def test_an_empty_tools_list_is_a_claude_setting():
-    assert Profile(engine="claude", tools=[]).tools == ()
+    assert Profile(harness="claude", tools=[]).tools == ()
     with pytest.raises(ProfileError, match=r"profile\.tools"):
-        Profile(engine="codex", tools=[])
+        Profile(harness="codex", tools=[])
 
 
-def test_hook_trust_bypass_is_refused_on_both_engines():
+def test_hook_trust_bypass_is_refused_on_both_harnesses():
     with pytest.raises(ProfileError, match="no hook-trust bypass over app-server"):
-        Profile(engine="codex", bypass_hook_trust=True)
+        Profile(harness="codex", bypass_hook_trust=True)
     with pytest.raises(ProfileError, match="claude has no hook trust"):
-        Profile(engine="claude", bypass_hook_trust=True)
+        Profile(harness="claude", bypass_hook_trust=True)
 
 
 def test_fence_key_is_refused_with_the_knobs_that_replace_it():
     with pytest.raises(ProfileError) as refused:
-        Profile.from_dict({"engine": "claude", "fence": "read"})
+        Profile.from_dict({"harness": "claude", "fence": "read"})
     message = str(refused.value)
     for knob in ("tools", "allowed_tools", "permission_mode", "setting_sources", "settings",
                  "mcp_config", "strict_mcp", "codex_config", "approval_policy"):
@@ -99,27 +99,27 @@ def test_fence_key_is_refused_with_the_knobs_that_replace_it():
     ("allow_tools", "allowed_tools"), ("env", "env_remove"), ("extra_args", "claude_extra_args")])
 def test_other_removed_keys_name_their_replacements(key, replacement):
     with pytest.raises(ProfileError, match=replacement):
-        Profile.from_dict({"engine": "codex", key: []})
+        Profile.from_dict({"harness": "codex", key: []})
 
 
 def test_from_dict_builds_and_refuses_unknown_keys():
-    p = Profile.from_dict({"engine": "codex", "model": "gpt-x", "effort": "high",
+    p = Profile.from_dict({"harness": "codex", "model": "gpt-x", "effort": "high",
                            "codex_config": {"sandbox_mode": "workspace-write"},
                            "approval_policy": "never", "env_set": {"A": "1"},
                            "env_remove": ["SECRET_*"], "timeout_seconds": 30})
     assert p.codex_config == {"sandbox_mode": "workspace-write"} and p.env_remove == ("SECRET_*",)
     assert Profile.from_dict(p.to_dict()) == p
     with pytest.raises(ProfileError, match="unknown key 'bogus'"):
-        Profile.from_dict({"engine": "claude", "bogus": 1})
+        Profile.from_dict({"harness": "claude", "bogus": 1})
     with pytest.raises(ProfileError, match="must be one of"):
-        Profile.from_dict({"engine": "codex", "approval_policy": "sometimes"})
-    with pytest.raises(ProfileError, match="missing required key 'engine'"):
+        Profile.from_dict({"harness": "codex", "approval_policy": "sometimes"})
+    with pytest.raises(ProfileError, match="missing required key 'harness'"):
         Profile.from_dict({"model": "x"})
 
 
 def test_a_variable_is_either_set_or_removed():
     with pytest.raises(ProfileError, match="also match env_remove"):
-        Profile(engine="claude", env_set={"SECRET_A": "x"}, env_remove=["SECRET_*"])
+        Profile(harness="claude", env_set={"SECRET_A": "x"}, env_remove=["SECRET_*"])
 
 
 def test_sessions():

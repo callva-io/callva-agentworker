@@ -2,7 +2,7 @@
 
 A profile is a flat record of explicit knobs. There is no inheritance, no
 preset and no fence: every behaviour a turn has is named by one field here, and
-a field that one engine cannot honour is refused for that engine when the
+a field that one harness cannot honour is refused for that harness when the
 profile is built, never ignored while it runs.
 """
 
@@ -15,10 +15,10 @@ from dataclasses import dataclass, field, fields
 from importlib import resources
 from typing import Any
 
-ENGINES = ("claude", "codex")
+HARNESSES = ("claude", "codex")
 
 # Variables a running Claude Code session sets in the environment of everything
-# it starts. A child engine that inherits them believes it runs inside that
+# it starts. A child harness that inherits them believes it runs inside that
 # session: it may reuse its effort, its session id or its messaging socket.
 SESSION_MARKERS = (
     "CLAUDECODE",
@@ -38,8 +38,9 @@ SESSION_MARKERS = (
     "AI_AGENT",
 )
 
-# 0.1.x keys that no longer exist, and what replaces each.
+# Keys that no longer exist, and what replaces each.
 REMOVED_KEYS = {
+    "engine": "'engine' was renamed 'harness' in 0.3.0",
     "fence": (
         "'fence' was removed in 0.2.0: a profile names every behaviour explicitly. "
         "On claude use tools, allowed_tools, disallowed_tools, permission_mode, "
@@ -66,15 +67,15 @@ PROFILE_SCHEMA: dict = load_profile_schema()
 
 @dataclass(frozen=True)
 class Profile:
-    """How one engine runs one turn. Every field is a knob; `None`, an empty
-    collection or `False` leaves the engine's own default in place."""
+    """How one harness runs one turn. Every field is a knob; `None`, an empty
+    collection or `False` leaves the harness's own default in place."""
 
-    engine: str
-    """Which engine runs the turn: `claude` (Claude Code through claude-agent-sdk) or `codex`
+    harness: str
+    """Which harness runs the turn: `claude` (Claude Code through claude-agent-sdk) or `codex`
     (Codex through openai-codex)."""
 
     cli_path: str | None = None
-    """The engine CLI to run. Claude: passed to the SDK as the CLI it launches. Codex: the
+    """The harness CLI to run. Claude: passed to the SDK as the CLI it launches. Codex: the
     binary whose `app-server` the SDK talks to. `None` finds the installed CLI on `PATH` and in
     the usual install places; the CLI bundled inside either SDK is never used."""
 
@@ -86,11 +87,11 @@ class Profile:
     effort (`minimal` to `xhigh` and what that codex build adds)."""
 
     timeout_seconds: float = 600.0
-    """Both: the deadline for the whole turn. When it passes the engine and every process it
+    """Both: the deadline for the whole turn. When it passes the harness and every process it
     started are killed, grandchildren included, and the turn is a `timeout` failure."""
 
     budget_usd: float | None = None
-    """Claude: `--max-budget-usd`; the engine ends the turn when its own cost estimate crosses
+    """Claude: `--max-budget-usd`; the harness ends the turn when its own cost estimate crosses
     it. Codex: refused, codex reports no cost."""
 
     tools: tuple[str, ...] | None = None
@@ -132,7 +133,7 @@ class Profile:
 
     append_system_prompt: str | None = None
     """Claude: appended to the Claude Code system prompt, which is always kept. Codex: the
-    thread's developer instructions, added beside codex's own instructions. Neither engine's
+    thread's developer instructions, added beside codex's own instructions. Neither harness's
     system prompt is ever replaced."""
 
     output_schema: Mapping[str, Any] | None = None
@@ -144,15 +145,15 @@ class Profile:
     """Claude: `--name`, the session's display name. Codex: the thread's name."""
 
     env_set: Mapping[str, str] = field(default_factory=dict)
-    """Both: variables set in the engine's environment, over what it inherits."""
+    """Both: variables set in the harness's environment, over what it inherits."""
 
     env_remove: tuple[str, ...] = ()
-    """Both: names or globs removed from what the engine inherits, removed for real by the
+    """Both: names or globs removed from what the harness inherits, removed for real by the
     launcher the library puts in front of the CLI. A name in `env_set` is never removed."""
 
     strip_session_markers: bool = True
     """Both: also remove `SESSION_MARKERS`, the variables a calling Claude Code session leaves
-    in its children's environment. On claude the values the SDK itself sets for the engine
+    in its children's environment. On claude the values the SDK itself sets for the harness
     (its entrypoint and version) stay."""
 
     codex_config: Mapping[str, Any] | None = None
@@ -197,7 +198,7 @@ class Profile:
             if isinstance(value, Mapping):
                 object.__setattr__(self, name, dict(value))
         validate_profile(self.to_dict())
-        _refuse_for_engine(self)
+        _refuse_for_harness(self)
 
     def to_dict(self) -> dict:
         data: dict[str, Any] = {}
@@ -222,7 +223,22 @@ class Profile:
         return cls(**dict(data))
 
 
-# Knobs that only one engine can honour, and what setting them on the other means.
+_dataclass_init = Profile.__init__
+
+
+def _init(self, *args: Any, **knobs: Any) -> None:
+    for key, message in REMOVED_KEYS.items():
+        if key in knobs:
+            raise ProfileError(f"profile.{key}: {message}")
+    _dataclass_init(self, *args, **knobs)
+
+
+_init.__doc__ = _dataclass_init.__doc__
+_init.__signature__ = __import__("inspect").signature(_dataclass_init)  # type: ignore[attr-defined]
+Profile.__init__ = _init  # type: ignore[method-assign]
+
+
+# Knobs that only one harness can honour, and what setting them on the other means.
 _CLAUDE_ONLY = (
     "budget_usd", "tools", "allowed_tools", "disallowed_tools", "permission_mode",
     "setting_sources", "settings", "mcp_config", "strict_mcp", "add_dirs", "claude_extra_args",
@@ -230,9 +246,9 @@ _CLAUDE_ONLY = (
 _CODEX_ONLY = ("codex_config", "approval_policy", "service_tier", "codex_extra_args")
 
 
-def _refuse_for_engine(profile: Profile) -> None:
-    engine = profile.engine
-    other_only = _CODEX_ONLY if engine == "claude" else _CLAUDE_ONLY
+def _refuse_for_harness(profile: Profile) -> None:
+    harness = profile.harness
+    other_only = _CODEX_ONLY if harness == "claude" else _CLAUDE_ONLY
     for name in other_only:
         value = getattr(profile, name)
         # An empty `tools` tuple is a real claude setting (no built-in tools), so a
@@ -240,11 +256,11 @@ def _refuse_for_engine(profile: Profile) -> None:
         is_set = value is not None if name == "tools" else bool(value)
         if is_set:
             raise ProfileError(
-                f"profile.{name}: {engine} cannot honour it; it is a "
-                f"{'codex' if engine == 'claude' else 'claude'} knob"
+                f"profile.{name}: {harness} cannot honour it; it is a "
+                f"{'codex' if harness == 'claude' else 'claude'} knob"
             )
     if profile.bypass_hook_trust:
-        if engine == "claude":
+        if harness == "claude":
             raise ProfileError("profile.bypass_hook_trust: claude has no hook trust to bypass")
         raise ProfileError(
             "profile.bypass_hook_trust: codex app-server cannot honour it; there is no hook-trust "
@@ -267,7 +283,7 @@ class Session:
 
     `fresh` starts one; on claude the id is generated before launch and pinned,
     on codex it is learned from the thread. `pinned` lets the caller choose the
-    id and is claude-only. `resume` continues an existing one on either engine.
+    id and is claude-only. `resume` continues an existing one on either harness.
     """
 
     kind: str = "fresh"

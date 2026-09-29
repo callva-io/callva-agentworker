@@ -37,9 +37,9 @@ def fake_env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def record(fake_env):
-    """What the fake engine recorded about the turn it ran."""
+    """What the fake harness recorded about the turn it ran."""
     return lambda: json.loads(Path(fake_env["FAKE_RECORD"]).read_text())
 
 
-def fake(engine: str) -> str:
-    return str(FAKES / engine)
+def fake(harness: str) -> str:
+    return str(FAKES / harness)

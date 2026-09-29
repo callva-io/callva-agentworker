@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "callva-agentworker"
+name = "callva-harness-runner"
 dynamic = ["version"]
 description = "One headless turn of a coding agent (Claude Code or Codex) through the vendor SDKs: explicit knobs, a deadline that kills the tree, one result."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "CallVA" }]
-keywords = ["claude", "codex", "headless", "agent", "worker", "claude-agent-sdk", "openai-codex"]
+keywords = ["claude", "codex", "headless", "agent", "harness", "claude-agent-sdk", "openai-codex"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
@@ -26,11 +26,11 @@ dependencies = ["claude-agent-sdk==0.2.161", "openai-codex==0.159.0"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.urls]
-Homepage = "https://github.com/callva-io/callva-agentworker"
-Source = "https://github.com/callva-io/callva-agentworker"
+Homepage = "https://github.com/callva-io/harness-runner"
+Source = "https://github.com/callva-io/harness-runner"
 
 [tool.hatch.version]
-path = "callva/agentworker/version.py"
+path = "callva/harness_runner/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["callva"]

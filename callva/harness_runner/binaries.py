@@ -1,4 +1,4 @@
-"""Find an engine outside a login shell, and ask it what it is."""
+"""Find a harness outside a login shell, and ask it what it is."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+from .renamed import refuse_attribute
 
 _FALLBACK_GLOBS = (
     "~/.local/bin",
@@ -42,11 +44,14 @@ def find_binary(name: str, environ: Mapping[str, str] | None = None) -> str | No
 
 @dataclass(frozen=True)
 class Probe:
-    engine: str
+    harness: str
     found: bool
     path: str | None = None
     version: str | None = None
     error: str | None = None
+
+    def __getattr__(self, name: str):
+        raise refuse_attribute("Probe", name)
 
 
 def version_line(path: str, environ: Mapping[str, str] | None = None,
@@ -66,10 +71,11 @@ def version_line(path: str, environ: Mapping[str, str] | None = None,
     return text.splitlines()[0], None
 
 
-def probe(engine: str, environ: Mapping[str, str] | None = None, timeout: float = 20.0) -> Probe:
-    """Whether the engine is present, and what version answers."""
-    path = find_binary(engine, environ)
+def probe(harness: str, environ: Mapping[str, str] | None = None, timeout: float = 20.0) -> Probe:
+    """Whether the harness is present, and what version answers."""
+    path = find_binary(harness, environ)
     if not path:
-        return Probe(engine, False, error=f"no {engine} executable on PATH or in the usual places")
+        return Probe(harness, False,
+                     error=f"no {harness} executable on PATH or in the usual places")
     version, error = version_line(path, environ, timeout)
-    return Probe(engine, True, path=path, version=version, error=error)
+    return Probe(harness, True, path=path, version=version, error=error)

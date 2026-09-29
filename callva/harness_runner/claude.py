@@ -73,7 +73,7 @@ def options(
 
 def event_dict(message: Any) -> dict:
     """One SDK message as a plain dict for `on_event`: a system message is the
-    engine's own event; any other message is its fields plus `type`, the SDK's class name."""
+    harness's own event; any other message is its fields plus `type`, the SDK's class name."""
     if isinstance(message, SystemMessage) and isinstance(message.data, dict):
         return dict(message.data)
     if dataclasses.is_dataclass(message):

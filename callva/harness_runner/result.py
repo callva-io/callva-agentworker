@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from enum import StrEnum
+from enum import EnumType, StrEnum
 from typing import Any
 
+from .renamed import RENAMED, refuse_attribute, renamed
 
-class FailureKind(StrEnum):
+
+class _Kinds(EnumType):
+    def __getattr__(cls, name: str):
+        raise refuse_attribute("FailureKind", name)
+
+
+class FailureKind(StrEnum, metaclass=_Kinds):
     QUOTA = "quota"
     MODEL_REFUSED = "model_refused"
     NOT_AUTHENTICATED = "not_authenticated"
@@ -19,12 +26,18 @@ class FailureKind(StrEnum):
     INVALID_OUTPUT = "invalid_output"
     ERROR = "error"
     CRASH = "crash"
-    INCOMPATIBLE_ENGINE = "incompatible_engine"
+    INCOMPATIBLE_HARNESS = "incompatible_harness"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str) and value in RENAMED:
+            raise ValueError(f"FailureKind value {renamed(value)}")
+        return None
 
 
 @dataclass(frozen=True)
 class Failure:
-    """A kind for code to branch on, and the engine's own sentence for a person."""
+    """A kind for code to branch on, and the harness's own sentence for a person."""
 
     kind: FailureKind
     message: str
@@ -46,7 +59,7 @@ class Tokens:
 @dataclass(frozen=True)
 class Result:
     ok: bool
-    engine: str
+    harness: str
     answer: str = ""
     structured: Any = None
     session_id: str | None = None
@@ -61,8 +74,11 @@ class Result:
     stderr_tail: str = ""
     command: tuple[str, ...] = ()
     raw: dict = field(default_factory=dict)
-    engine_version: str | None = None
+    harness_version: str | None = None
     warnings: tuple[str, ...] = ()
+
+    def __getattr__(self, name: str):
+        raise refuse_attribute("Result", name)
 
     def to_dict(self) -> dict:
         data = asdict(self)

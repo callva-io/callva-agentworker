@@ -15,7 +15,7 @@ from typing import Any
 
 from . import claude, codex, guard, tree
 from .binaries import find_binary
-from .classify import classify, unwrap_engine_message
+from .classify import classify, unwrap_harness_message
 from .launch import CLAUDE_SDK_OWNED, Launch, plan_env
 from .profile import SESSION_MARKERS, Profile, Session
 from .result import Failure, FailureKind, Result, Tokens
@@ -39,10 +39,10 @@ def _structured(answer: str, given: Any) -> tuple[Any, bool]:
 
 
 def _unreported(error: BaseException | None, stderr: str) -> str:
-    """What to say about a turn that ended without the engine's own report."""
+    """What to say about a turn that ended without the harness's own report."""
     said = str(error).strip() if error is not None else ""
     lines = stderr.strip().splitlines()
-    return said or (lines[-1] if lines else "the engine ended without a report")
+    return said or (lines[-1] if lines else "the harness ended without a report")
 
 
 def _tail(lines, count: int) -> str:
@@ -65,27 +65,27 @@ def _supervise(work: Callable[[], None], launch: Launch, *, timeout: float,
                cancel: threading.Event | None, on_stop: Callable[[], None]) -> _Stopped:
     """Run `work` on a thread and end it at the deadline or on cancel.
 
-    Ending it means refusing any later engine start, killing every process the
-    engine started, and then letting the SDK notice and unwind.
+    Ending it means refusing any later harness start, killing every process the
+    harness started, and then letting the SDK notice and unwind.
     """
     ending = _Stopped()
-    worker = threading.Thread(target=work, name="agentworker-turn", daemon=True)
-    worker.start()
+    thread = threading.Thread(target=work, name="harness-run", daemon=True)
+    thread.start()
     deadline = time.monotonic() + timeout
-    while worker.is_alive():
+    while thread.is_alive():
         if cancel is not None and cancel.is_set():
             ending.cancelled = True
             break
         if time.monotonic() >= deadline:
             ending.timed_out = True
             break
-        worker.join(0.05)
+        thread.join(0.05)
     if ending.stopped:
         tree.kill_tree(launch.stop())
         # The processes are already dead; this only lets the SDK notice sooner.
         with contextlib.suppress(Exception):
             on_stop()
-        worker.join(WIND_DOWN_SECONDS)
+        thread.join(WIND_DOWN_SECONDS)
     return ending
 
 
@@ -103,44 +103,44 @@ def run(
 ) -> Result:
     """Run one headless turn and return what came of it.
 
-    Never raises for anything the engine did; every ending is a Result. Raises
+    Never raises for anything the harness did; every ending is a Result. Raises
     ValueError only for a request the library cannot express, such as a pinned
     session on codex.
 
-    `environ` is the environment the engine starts from (default: this
+    `environ` is the environment the harness starts from (default: this
     process's); `extra_env` is set on top of it and of the profile's `env_set`.
-    `on_event` receives one dict per engine event while the turn runs. Setting
+    `on_event` receives one dict per harness event while the turn runs. Setting
     `cancel` ends the turn early and kills its processes.
     """
     session = session or Session.fresh()
-    engine = profile.engine
-    if engine == "codex" and session.kind == "pinned":
+    harness = profile.harness
+    if harness == "codex" and session.kind == "pinned":
         raise ValueError("codex cannot pin a thread id; use Session.fresh() or Session.resume(id)")
     base = dict(os.environ if environ is None else environ)
-    binary = profile.cli_path or find_binary(engine, base)
+    binary = profile.cli_path or find_binary(harness, base)
     if not binary or not os.access(binary, os.X_OK):
         where = f"at {binary}" if binary else "on PATH or in the usual places"
-        return Result(ok=False, engine=engine, failure=Failure(
-            FailureKind.BINARY_MISSING, f"no {engine} executable {where}"))
-    verdict = guard.check(engine, binary, base)
+        return Result(ok=False, harness=harness, failure=Failure(
+            FailureKind.BINARY_MISSING, f"no {harness} executable {where}"))
+    verdict = guard.check(harness, binary, base)
     if verdict.refusal:
-        return Result(ok=False, engine=engine, engine_version=verdict.version,
-                      failure=Failure(FailureKind.INCOMPATIBLE_ENGINE, verdict.refusal))
+        return Result(ok=False, harness=harness, harness_version=verdict.version,
+                      failure=Failure(FailureKind.INCOMPATIBLE_HARNESS, verdict.refusal))
     warnings = (verdict.warning,) if verdict.warning else ()
     markers = SESSION_MARKERS if profile.strip_session_markers else ()
     patterns = tuple(profile.env_remove) + markers
     plan = plan_env(inherited=os.environ, wanted_base=base,
                     set_env={**profile.env_set, **dict(extra_env or {})},
                     remove_patterns=patterns,
-                    sdk_owned=CLAUDE_SDK_OWNED if engine == "claude" else ())
+                    sdk_owned=CLAUDE_SDK_OWNED if harness == "claude" else ())
     # Codex finds its companion executables (the code-mode host that runs shell
     # commands) beside the path it was started from, so a symlinked install is
     # started at the file the link points to.
-    launch = Launch(engine, os.path.realpath(binary) if engine == "codex" else binary, plan)
-    context = {"engine_version": verdict.version, "warnings": warnings}
+    launch = Launch(harness, os.path.realpath(binary) if harness == "codex" else binary, plan)
+    context = {"harness_version": verdict.version, "warnings": warnings}
     workdir = str(Path(cwd))
     try:
-        if engine == "claude":
+        if harness == "claude":
             return _run_claude(prompt, profile, workdir, launch, plan.set, session, on_event,
                                cancel, stderr_tail, context)
         return _run_codex(prompt, profile, workdir, launch, plan.set, session, on_event,
@@ -172,7 +172,7 @@ def _run_claude(prompt, profile, cwd, launch, env, session, on_event, cancel, st
     elapsed = int((time.monotonic() - started) * 1000)
     fields = claude.read(outcome.result) if outcome.result is not None else {}
     common = {
-        "engine": "claude",
+        "harness": "claude",
         "answer": fields.get("answer", ""),
         "session_id": fields.get("session_id") or session_id or resume_id,
         "model": fields.get("model") or (outcome.init or {}).get("model") or profile.model,
@@ -191,7 +191,7 @@ def _run_claude(prompt, profile, cwd, launch, env, session, on_event, cancel, st
         retry = outcome.last_retry or {}
         status = retry.get("error_status")
         if ending.timed_out and status in (401, 429):
-            message = (f"turn timed out after {profile.timeout_seconds:g}s while the engine "
+            message = (f"turn timed out after {profile.timeout_seconds:g}s while the harness "
                        f"retried: {retry.get('error')} (HTTP {status})")
             return Result(ok=False, failure=Failure(classify(message, http_status=status),
                                                     message), **common)
@@ -245,7 +245,7 @@ def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, std
     answer = codex.answer(outcome)
     turn = outcome.turn or {}
     common = {
-        "engine": "codex",
+        "harness": "codex",
         "answer": answer,
         "session_id": outcome.thread_id or resume_id,
         "model": profile.model,
@@ -279,7 +279,7 @@ def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, std
                     "a schema was required and the answer did not parse"), **common)
         return Result(ok=True, structured=structured, **common)
     if error is not None:
-        message = unwrap_engine_message(error.get("message")) or "the turn failed"
+        message = unwrap_harness_message(error.get("message")) or "the turn failed"
         kind, http_status = codex.error_info_kind(error)
         if kind is None:
             kind = classify(message, http_status=http_status)

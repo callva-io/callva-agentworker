@@ -1,9 +1,9 @@
-"""Kill everything an engine started, grandchildren included.
+"""Kill everything a harness started, grandchildren included.
 
-The launcher makes the engine a session leader. The engines put each tool
+The launcher makes the harness a session leader. The harnesses put each tool
 command in a process group of its own, and a command that backgrounds a child
 and exits leaves that child with the group and session it was born in but a new
-parent. So a tree is found three ways: by parentage from the engine, by the
+parent. So a tree is found three ways: by parentage from the harness, by the
 process groups of what was found, and by the sessions of what was found; and
 the caller's own group and session are never touched.
 """

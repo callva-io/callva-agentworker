@@ -1,6 +1,6 @@
 """One headless turn of a coding agent, run through the vendor's own SDK.
 
-    from callva.agentworker import Profile, run
+    from callva.harness_runner import Profile, run
 
     result = run(prompt, Profile.from_dict(config), cwd=".")
     if result.ok:
@@ -14,7 +14,7 @@
 from .binaries import Probe, find_binary, probe
 from .guard import TESTED_VERSIONS
 from .profile import (
-    ENGINES,
+    HARNESSES,
     PROFILE_SCHEMA,
     SESSION_MARKERS,
     Profile,
@@ -23,12 +23,18 @@ from .profile import (
     load_profile_schema,
     validate_profile,
 )
+from .renamed import refuse_attribute
 from .result import Failure, FailureKind, Result, Tokens
 from .run import run
 from .version import __version__
 
+
+def __getattr__(name: str):
+    raise refuse_attribute(__name__, name)
+
+
 __all__ = [
-    "ENGINES",
+    "HARNESSES",
     "PROFILE_SCHEMA",
     "SESSION_MARKERS",
     "TESTED_VERSIONS",

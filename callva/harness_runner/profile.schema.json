@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/callva-io/callva-agentworker/profile.schema.json",
-  "title": "callva-agentworker profile",
-  "description": "How one headless engine turn is run: a flat set of explicit knobs. What each knob does on each engine is documented on the Profile class and in the README. A knob one engine cannot honour is refused for it when the profile is built.",
+  "$id": "https://github.com/callva-io/harness-runner/profile.schema.json",
+  "title": "callva-harness-runner profile",
+  "description": "How one headless harness turn is run: a flat set of explicit knobs. What each knob does on each harness is documented on the Profile class and in the README. A knob one harness cannot honour is refused for it when the profile is built.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["engine"],
+  "required": ["harness"],
   "properties": {
-    "engine": {"type": "string", "enum": ["claude", "codex"]},
+    "harness": {"type": "string", "enum": ["claude", "codex"]},
     "cli_path": {"type": ["string", "null"]},
     "model": {"type": ["string", "null"]},
     "effort": {"type": ["string", "null"]},

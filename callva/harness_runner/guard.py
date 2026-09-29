@@ -1,4 +1,4 @@
-"""The harness guard: which engine CLI versions this release was tested with.
+"""The harness guard: which harness CLI versions this release was tested with.
 
 The SDKs pin nothing about the CLI they are pointed at, so a machine can move
 its CLI past what this library knows. Before every turn the installed CLI's
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from .binaries import version_line
 
-# The inclusive range of CLI versions this release was tested with, per engine.
+# The inclusive range of CLI versions this release was tested with, per harness.
 # The low end is the CLI installed where the release was tested; the high end
 # is the CLI the pinned SDK bundles, which is what that SDK release was built
 # against.
@@ -56,23 +56,23 @@ def _read(path: str, environ: Mapping[str, str]) -> tuple[str | None, str | None
     return line, error
 
 
-def check(engine: str, path: str, environ: Mapping[str, str]) -> Verdict:
-    """Hold the CLI at `path` against the tested range for `engine`."""
-    low, high = TESTED_VERSIONS[engine]
+def check(harness: str, path: str, environ: Mapping[str, str]) -> Verdict:
+    """Hold the CLI at `path` against the tested range for `harness`."""
+    low, high = TESTED_VERSIONS[harness]
     line, error = _read(path, environ)
     found = parse_version(line)
     if found is None:
         said = line if line is not None else error
         return Verdict(None, refusal=(
-            f"could not read the version of {engine} at {path} ({said}); "
-            f"this release was tested with {engine} {low} to {high}"))
+            f"could not read the version of {harness} at {path} ({said}); "
+            f"this release was tested with {harness} {low} to {high}"))
     version = ".".join(str(part) for part in found)
     if found < parse_version(low):
         return Verdict(version, refusal=(
-            f"{engine} {version} at {path} is older than {low}, the oldest version this "
+            f"{harness} {version} at {path} is older than {low}, the oldest version this "
             f"release was tested with (tested {low} to {high})"))
     if found > parse_version(high):
         return Verdict(version, warning=(
-            f"{engine} {version} at {path} is newer than {high}, the newest version this "
+            f"{harness} {version} at {path} is newer than {high}, the newest version this "
             f"release was tested with (tested {low} to {high}); the turn ran anyway"))
     return Verdict(version)
