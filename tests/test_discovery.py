@@ -152,6 +152,7 @@ def test_shipped_read_is_held_by_instruction_only(machine):
     claude, codex = find_profile("read", "claude"), find_profile("read", "codex")
     assert claude.permission_mode == "bypassPermissions" and claude.settings is None
     assert claude.setting_sources == ("project", "local") and claude.tools is None
+    # No settings at all, so the target's hooks run.
     assert codex.codex_config == {"sandbox_mode": "danger-full-access"}
     for profile in (claude, codex):
         assert profile.append_system_prompt == READ_ONLY
@@ -175,6 +176,8 @@ def test_shipped_read_sandboxed_is_enforced_by_the_os(machine):
     assert sandbox["allowUnsandboxedCommands"] is False
     assert sandbox["filesystem"] == {"allowWrite": ["~/.cache"]}
     assert sandbox["network"] == {"allowedDomains": ["*"]}
+    # A hook runs outside the sandbox and could write the target.
+    assert claude.settings["disableAllHooks"] is True
     permissions = claude.settings["permissions"]
     assert "Edit(./**)" in permissions["deny"] and permissions["ask"] == ["Bash"]
     assert claude.disallowed_tools == ("Write", "Edit", "NotebookEdit")
