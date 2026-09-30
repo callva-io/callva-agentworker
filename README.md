@@ -29,7 +29,7 @@ In a PEP 723 script, pin the exact version so nothing outside the script's own r
 
 ```python
 # /// script
-# dependencies = ["callva-harness-runner==0.7.0"]
+# dependencies = ["callva-harness-runner==0.8.0"]
 # ///
 ```
 
@@ -65,7 +65,7 @@ A profile is a flat set of explicit knobs. There is no inheritance and no fence.
 |---|---|---|
 | `harness` | `claude` | `codex` |
 | `cli_path` | the CLI the SDK launches; `None` finds the installed `claude` | the binary whose `app-server` the SDK talks to; `None` finds the installed `codex` |
-| `model` | `--model` | the thread's model |
+| `model` | `--model`, as given | the thread's model; a family name of lowercase letters only (`sol`) runs the newest listed `gpt-<version>-<family>` model in codex's catalog, and fails the run when there is none; any other value is a literal slug |
 | `effort` | `--effort` | the turn's reasoning effort |
 | `timeout_seconds` | the deadline; default 600 | the same |
 | `budget_usd` | `--max-budget-usd` | refused: codex reports no cost |
@@ -135,7 +135,7 @@ From a shell, `python -m callva.harness_runner profiles` prints the listing as J
 
 ### Shipped profiles
 
-The claude profiles follow the newest Opus: they name `opus`, Claude Code's alias for its newest Opus, so a newer Opus is picked up without a release. Codex offers no such alias, so the codex profiles name `gpt-6.1-sol`, the Codex catalog's current default, and moving them to a newer model takes a release. All run at effort `medium` with a one-hour deadline. Print one with `profiles show NAME`.
+The claude profiles follow the newest Opus: they name `opus`, Claude Code's alias for its newest Opus, so a newer Opus is picked up without a release. Codex has no such alias, so the codex profiles name the model family `sol`, which the runner resolves at run time to the newest listed sol model in codex's own catalog (today `gpt-6.1-sol`): a newer sol model is picked up without a release, and a catalog with no sol model fails the run rather than running another family. All run at effort `medium` with a one-hour deadline. Print one with `profiles show NAME`.
 
 - `claude-read`, `codex-read`: a research question held to reading by instruction alone. Every tool and a full shell (claude `bypassPermissions`, codex `danger-full-access`), the target's project and local settings on claude, a read-only instruction appended to the system prompt, and `CAPABILITIES_READ_ONLY=1`.
 - `claude-act`, `codex-act`: a task with full access (claude `bypassPermissions`, codex `danger-full-access`, approvals never).
@@ -170,7 +170,7 @@ The launcher makes the harness a session leader. When the deadline passes, or `c
 | `answer` | the final text |
 | `structured` | the parsed answer when `output_schema` was given |
 | `session_id` | claude session id or codex thread id, set whenever known, including after a kill |
-| `model` | the model that ran when claude reports it, else the requested one |
+| `model` | the model that ran when claude reports it; on codex the slug a family resolved to; else the requested one |
 | `cost_usd` | claude's own estimate; `None` on codex |
 | `duration_ms`, `num_turns` | as reported; `num_turns` is `None` on codex |
 | `tokens` | `input`, `output`, `cache_read`, `cache_creation` for this turn |
@@ -188,6 +188,14 @@ The launcher makes the harness a session leader. When the deadline passes, or `c
 `quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`, `incompatible_harness`. The harness's own verdict is read first (claude's result subtype, codex's `codexErrorInfo`), then an HTTP status it reports, then its sentence: a spent quota before a refused model, because a subscription spent on one model says both and only one of them is a pause. A claude turn that times out while the harness is retrying a 401 or a 429 is `not_authenticated` or `quota`. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
 
 ## Changelog
+
+### 0.8.0
+
+A codex profile can name a model family. Additive: every literal model slug runs exactly as in 0.7.0.
+
+- On codex, a `model` made only of lowercase letters (`sol`, `luna`, `astra`) is a family: before the turn the runner reads codex's own catalog through the app-server's `model/list` and runs the newest listed `gpt-<version>-<family>` model, newest by the version in the slug. `Result.model` is the slug that ran.
+- A family with no listed model, or a catalog that cannot be read, fails the run (`model_refused` or `error`) naming the family; no model is run and there is no fallback.
+- `codex-read`, `codex-act` and `codex-read-sandboxed` name the family `sol` in place of `gpt-6.1-sol`, so a newer sol model needs no release. Today it resolves to `gpt-6.1-sol`.
 
 ### 0.7.0
 

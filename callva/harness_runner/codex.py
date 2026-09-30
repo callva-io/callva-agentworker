@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from openai_codex import ApprovalMode, Codex, CodexConfig, Thread
+from openai_codex.types import ModelListResponse
 
 from .profile import Profile
 from .result import FailureKind, Tokens
@@ -56,11 +58,75 @@ def trusted_projects(cwd: str) -> dict[str, Any]:
     return {path: {"trust_level": "trusted"} for path in (root, os.path.realpath(root))}
 
 
-def thread_options(profile: Profile, *, cwd: str) -> dict[str, Any]:
-    """The keyword arguments of `thread_start` and `thread_resume` a profile sets."""
+# A model family is a name made only of lowercase letters (`sol`, `luna`, `astra`); anything
+# else is a literal slug. A slug belongs to family F when it is `gpt-<version>-F`, the version
+# being dot-separated numbers.
+FAMILY = re.compile(r"[a-z]+")
+FAMILY_SLUG = re.compile(r"gpt-(\d+(?:\.\d+)*)-([a-z]+)")
+
+
+class NoModel(Exception):
+    """A model family that resolved to no model, so no model was run."""
+
+    def __init__(self, kind: FailureKind, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def is_family(model: str | None) -> bool:
+    """Whether a profile's `model` names a family rather than a literal slug."""
+    return bool(model) and FAMILY.fullmatch(model) is not None
+
+
+def newest_in_family(family: str, models: list[dict]) -> str | None:
+    """The newest listed slug of `family` in a catalog of `{"id", "hidden"}` entries, by the
+    version in the slug; `None` when none is listed."""
+    found: list[tuple[tuple[int, ...], str]] = []
+    for entry in models:
+        slug = entry.get("id")
+        if entry.get("hidden") or not isinstance(slug, str):
+            continue
+        match = FAMILY_SLUG.fullmatch(slug)
+        if match and match.group(2) == family:
+            found.append((tuple(int(part) for part in match.group(1).split(".")), slug))
+    return max(found)[1] if found else None
+
+
+def catalog(client: Codex) -> list[dict]:
+    """Every model the app-server lists, hidden ones included, across all its pages."""
+    page = client.models(include_hidden=True)
+    models = [{"id": entry.id, "hidden": entry.hidden} for entry in page.data]
+    while page.next_cursor:
+        page = client._client.request(
+            "model/list", {"includeHidden": True, "cursor": page.next_cursor},
+            response_model=ModelListResponse)
+        models += [{"id": entry.id, "hidden": entry.hidden} for entry in page.data]
+    return models
+
+
+def resolve_model(client: Codex, family: str) -> str:
+    """The newest listed model of `family` in codex's own catalog; raises `NoModel` when there
+    is none or the catalog cannot be read, and never falls back to another model."""
+    try:
+        models = catalog(client)
+    except Exception as exc:
+        raise NoModel(FailureKind.ERROR, (
+            f"the codex model catalog could not be read to resolve the model family "
+            f"'{family}', so no model was run: {exc}")) from exc
+    slug = newest_in_family(family, models)
+    if slug is None:
+        raise NoModel(FailureKind.MODEL_REFUSED, (
+            f"the codex model catalog lists no model of the family '{family}', "
+            f"so no model was run"))
+    return slug
+
+
+def thread_options(profile: Profile, *, cwd: str, model: str | None = None) -> dict[str, Any]:
+    """The keyword arguments of `thread_start` and `thread_resume` a profile sets; `model`, when
+    given, is the slug a family resolved to."""
     opts: dict[str, Any] = {"cwd": cwd}
-    if profile.model:
-        opts["model"] = profile.model
+    if model or profile.model:
+        opts["model"] = model or profile.model
     config = dict(profile.codex_config or {})
     if profile.bypass_hook_trust:
         # The project's hooks run for this thread only, with nothing persisted: the project is
@@ -101,6 +167,7 @@ class Outcome:
     """Everything one codex turn produced, as the app-server reported it."""
 
     thread_id: str | None = None
+    model: str | None = None
     turn: dict | None = None
     items: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
@@ -121,12 +188,15 @@ def run_turn(
     on_client: Callable[[Codex], None],
     on_event: Callable[[dict], None] | None,
 ) -> None:
-    """Start codex, run one turn on a fresh or resumed thread, and read its stream."""
+    """Start codex, resolve a model family, run one turn on a fresh or resumed thread, and read
+    its stream."""
     client = None
     try:
         client = Codex(cfg)
         on_client(client)
-        opts = thread_options(profile, cwd=cwd)
+        if is_family(profile.model):
+            outcome.model = resolve_model(client, profile.model)
+        opts = thread_options(profile, cwd=cwd, model=outcome.model)
         if resume_id:
             thread: Thread = client.thread_resume(resume_id, **opts)
         else:

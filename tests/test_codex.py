@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -150,3 +151,87 @@ def test_the_trusted_project_is_the_nearest_git_root_else_the_working_directory(
     loose.mkdir()
     if not any((parent / ".git").exists() for parent in loose.parents):
         assert project_root(str(loose)) == str(loose)
+
+
+TODAY = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-reserve", "gpt-5.6-sol",
+         "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "codex-auto-review"]
+HIDDEN = {"gpt-reserve", "codex-auto-review"}
+
+
+def catalog(*added):
+    """Today's catalog in codex's order, with `added` (slug, hidden) entries at its end."""
+    entries = [{"id": slug, "hidden": slug in HIDDEN} for slug in TODAY]
+    return json.dumps(entries + [{"id": slug, "hidden": hidden} for slug, hidden in added])
+
+
+@pytest.mark.parametrize("family,added,resolved", [
+    ("sol", (), "gpt-6.1-sol"),
+    # Last in the catalog's order, and still the newest: the version decides, not the priority.
+    ("sol", (("gpt-6.2-sol", False),), "gpt-6.2-sol"),
+    ("sol", (("gpt-6.3-sol", True),), "gpt-6.1-sol"),
+    ("astra", (), "gpt-6-astra"),
+    ("luna", (), "gpt-6-luna"),
+])
+def test_a_family_runs_the_newest_listed_model_of_that_family(
+        fake_env, record, tmp_path, family, added, resolved):
+    env = {**fake_env, "FAKE_CODEX_MODELS": catalog(*added)}
+    result = run("x", codex(model=family), tmp_path, environ=env)
+    assert result.ok, result.failure
+    [start] = requests(record, "thread/start")
+    assert start["model"] == resolved and result.model == resolved
+    assert requests(record, "model/list") == [{"includeHidden": True}]
+
+
+def test_a_resumed_thread_runs_the_family_resolved_again(fake_env, record, tmp_path):
+    first = run("x", codex(), tmp_path, environ=fake_env)
+    env = {**fake_env, "FAKE_CODEX_MODELS": catalog(("gpt-6.2-sol", False))}
+    again = run("y", codex(model="sol"), tmp_path, environ=env,
+                session=Session.resume(first.session_id))
+    assert again.ok and again.model == "gpt-6.2-sol"
+    [resume] = requests(record, "thread/resume")
+    assert resume["model"] == "gpt-6.2-sol"
+
+
+@pytest.mark.parametrize("family,models", [
+    ("nova", catalog()),
+    ("nova", catalog(("gpt-7-nova", True))),
+    ("sol", json.dumps([{"id": "gpt-6-astra", "hidden": False}])),
+], ids=["unknown", "only-hidden", "other-family-only"])
+def test_a_family_with_no_listed_model_fails_and_runs_nothing(
+        fake_env, record, tmp_path, family, models):
+    env = {**fake_env, "FAKE_CODEX_MODELS": models}
+    result = run("x", codex(model=family), tmp_path, environ=env)
+    assert not result.ok and result.failure.kind == FailureKind.MODEL_REFUSED
+    assert f"'{family}'" in result.failure.message
+    assert "no model was run" in result.failure.message
+    assert requests(record, "thread/start") == [] and requests(record, "turn/start") == []
+
+
+def test_an_unreadable_catalog_fails_and_runs_nothing(fake_env, record, tmp_path):
+    result = run("x", codex(model="sol"), tmp_path, environ={**fake_env, "FAKE_CODEX": "nocatalog"})
+    assert not result.ok and result.failure.kind == FailureKind.ERROR
+    assert "'sol'" in result.failure.message and "no model was run" in result.failure.message
+    assert "model catalog unavailable" in result.failure.message
+    assert requests(record, "thread/start") == [] and requests(record, "turn/start") == []
+
+
+@pytest.mark.parametrize("slug", TODAY)
+def test_every_slug_in_the_catalog_is_literal(slug):
+    from callva.harness_runner.codex import is_family
+    assert not is_family(slug)
+
+
+@pytest.mark.parametrize("name", ["sol", "luna", "astra"])
+def test_a_family_name_is_a_family(name):
+    from callva.harness_runner.codex import is_family
+    assert is_family(name)
+
+
+@pytest.mark.parametrize("slug", ["gpt-6.1-sol", "gpt-6-sol", "gpt-nonexistent-9"])
+def test_a_literal_slug_is_passed_as_given_without_a_catalog_lookup(
+        fake_env, record, tmp_path, slug):
+    result = run("x", codex(model=slug), tmp_path, environ={**fake_env, "FAKE_CODEX": "success"})
+    assert result.ok and result.model == slug
+    [start] = requests(record, "thread/start")
+    assert start["model"] == slug
+    assert requests(record, "model/list") == []

@@ -45,6 +45,31 @@ def notify(method, params):
     send({"method": method, "params": params})
 
 
+# The catalog a real codex 0.159.0 lists, in its own order; FAKE_CODEX_MODELS replaces it with
+# a JSON list of {"id", "hidden"}.
+CATALOG = [{"id": slug, "hidden": False} for slug in (
+    "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna")] + [
+    {"id": "gpt-reserve", "hidden": True}] + [{"id": slug, "hidden": False} for slug in (
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5")] + [
+    {"id": "codex-auto-review", "hidden": True}]
+
+
+def model_obj(entry, first):
+    return {
+        "id": entry["id"], "model": entry["id"], "displayName": entry["id"],
+        "description": "", "hidden": entry["hidden"], "isDefault": first,
+        "defaultReasoningEffort": "medium", "upgrade": None,
+        "supportedReasoningEfforts": [{"reasoningEffort": "medium", "description": ""}],
+    }
+
+
+def model_list(params):
+    models = json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or CATALOG
+    if not params.get("includeHidden"):
+        models = [m for m in models if not m["hidden"]]
+    return {"data": [model_obj(m, i == 0) for i, m in enumerate(models)], "nextCursor": None}
+
+
 def thread_obj(thread_id, cwd, model):
     return {
         "id": thread_id, "environments": [{"environmentId": "local", "cwd": cwd,
@@ -165,6 +190,11 @@ for line in sys.stdin:
     elif method == "thread/resume":
         resumed.add(params["threadId"])
         send({"id": rid, "result": thread_result(params["threadId"], params)})
+    elif method == "model/list":
+        if mode == "nocatalog":
+            send({"id": rid, "error": {"code": -32603, "message": "model catalog unavailable"}})
+        else:
+            send({"id": rid, "result": model_list(params)})
     elif method == "thread/name/set":
         send({"id": rid, "result": {}})
     elif method == "turn/start":

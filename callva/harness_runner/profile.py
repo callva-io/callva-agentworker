@@ -82,7 +82,13 @@ class Profile:
     as the CLI it launches. Codex: the binary whose `app-server` the SDK talks to."""
 
     model: str | None = None
-    """Claude: `--model`. Codex: the thread's model."""
+    """Claude: `--model`, passed as given (Claude Code resolves its own aliases, such as
+    `opus`). Codex: the thread's model. A value made only of lowercase letters (`sol`, `luna`,
+    `astra`) is a model family: before the turn it resolves to the newest model codex's own
+    catalog lists (not hidden) whose slug is `gpt-<version>-<family>`, newest by the version in
+    the slug, and `Result.model` is that slug. A family with no listed model, or a catalog that
+    cannot be read, fails the run with no model run; it never falls back to another model. Any
+    other value is a literal slug, passed as given."""
 
     effort: str | None = None
     """Claude: `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Codex: the turn's reasoning

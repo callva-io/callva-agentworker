@@ -6,12 +6,13 @@
 # capability call it makes read-only. For a read enforced by the OS, use
 # codex-read-sandboxed.
 #
-# Codex offers no alias for its newest model, so the model is pinned to the
-# catalog's current default, gpt-6.1-sol; moving it to a newer model takes a
-# release.
+# The model is the family sol: the runner resolves it at run time to the
+# newest listed sol model in codex's own catalog, so a newer sol model needs
+# no release, and a catalog with no sol model fails the run rather than
+# running another family.
 
 harness = "codex"
-model = "gpt-6.1-sol"
+model = "sol"
 effort = "medium"
 timeout_seconds = 3600
 approval_policy = "never"

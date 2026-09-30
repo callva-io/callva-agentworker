@@ -138,3 +138,11 @@ def test_a_login_the_harness_keeps_retrying_is_not_authenticated(fake_env, tmp_p
                  environ={**fake_env, "FAKE_CLAUDE": "retry401"})
     assert result.failure.kind == FailureKind.NOT_AUTHENTICATED
     assert "HTTP 401" in result.failure.message and "timed out" in result.failure.message
+
+
+@pytest.mark.parametrize("model", ["opus", "sol"])
+def test_a_model_name_reaches_claude_as_given(fake_env, record, tmp_path, model):
+    # Codex's model families do not apply on claude: every name is passed to `--model`.
+    result = run("hi", claude(model=model), tmp_path, environ=fake_env)
+    assert result.ok, result.failure
+    assert flag(record()["argv"], "--model") == model

@@ -311,7 +311,7 @@ def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, std
         "harness": "codex",
         "answer": answer,
         "session_id": outcome.thread_id or resume_id,
-        "model": profile.model,
+        "model": outcome.model or profile.model,
         "cost_usd": None,
         "duration_ms": turn.get("durationMs") or elapsed,
         "num_turns": None,
@@ -325,6 +325,8 @@ def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, std
     }
     if ending.stopped:
         return Result(ok=False, failure=_stopped_failure(ending, profile), **common)
+    if isinstance(outcome.error, codex.NoModel):
+        return Result(ok=False, failure=Failure(outcome.error.kind, str(outcome.error)), **common)
     if outcome.turn is None:
         error = outcome.error
         message = _unreported(error, common["stderr_tail"])

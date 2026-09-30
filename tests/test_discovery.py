@@ -255,7 +255,7 @@ def test_each_shipped_profile_loads_on_its_harness(machine, name):
     assert file.source == "shipped" and file.harness == harness
     profile = find_profile(name)
     assert isinstance(profile, Profile) and profile.harness == harness
-    assert profile.model == {"claude": "opus", "codex": "gpt-6.1-sol"}[harness]
+    assert profile.model == {"claude": "opus", "codex": "sol"}[harness]
     assert profile.effort == "medium" and profile.timeout_seconds == 3600
 
 
