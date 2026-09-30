@@ -15,9 +15,12 @@
 # would build (a SessionStart context build, for example) is read as it already
 # is on disk. CLAUDE.md and the project's rules still load. The plain
 # claude-read profile does run the target's hooks.
+#
+# `opus` is Claude Code's alias for the newest Opus, so a newer Opus is picked
+# up without a release.
 
 harness = "claude"
-model = "claude-opus-5-5"
+model = "opus"
 effort = "medium"
 timeout_seconds = 3600
 permission_mode = "default"

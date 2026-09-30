@@ -29,7 +29,7 @@ In a PEP 723 script, pin the exact version so nothing outside the script's own r
 
 ```python
 # /// script
-# dependencies = ["callva-harness-runner==0.5.0"]
+# dependencies = ["callva-harness-runner==0.6.0"]
 # ///
 ```
 
@@ -132,7 +132,7 @@ From a shell, `python -m callva.harness_runner profiles` prints the listing as J
 
 ### Shipped profiles
 
-The claude profiles run `claude-opus-5-5` and the codex profiles `gpt-6-sol`, all at effort `medium` with a one-hour deadline. Print one with `profiles show NAME`.
+The claude profiles follow the newest Opus: they name `opus`, Claude Code's alias for its newest Opus, so a newer Opus is picked up without a release. Codex offers no such alias, so the codex profiles name `gpt-6.1-sol`, the Codex catalog's current default, and moving them to a newer model takes a release. All run at effort `medium` with a one-hour deadline. Print one with `profiles show NAME`.
 
 - `claude-read`, `codex-read`: a research question held to reading by instruction alone. Every tool and a full shell (claude `bypassPermissions`, codex `danger-full-access`), the target's project and local settings on claude, a read-only instruction appended to the system prompt, and `CAPABILITIES_READ_ONLY=1`.
 - `claude-act`, `codex-act`: a task with full access (claude `bypassPermissions`, codex `danger-full-access`, approvals never).
@@ -185,6 +185,14 @@ The launcher makes the harness a session leader. When the deadline passes, or `c
 `quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`, `incompatible_harness`. The harness's own verdict is read first (claude's result subtype, codex's `codexErrorInfo`), then an HTTP status it reports, then its sentence: a spent quota before a refused model, because a subscription spent on one model says both and only one of them is a pause. A claude turn that times out while the harness is retrying a 401 or a 429 is `not_authenticated` or `quota`. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
 
 ## Changelog
+
+### 0.6.0
+
+The shipped profiles change model, so a run on them runs a different model; nothing else in them, and no API, changes.
+
+- `claude-read`, `claude-act` and `claude-read-sandboxed` name `opus`, Claude Code's alias for its newest Opus, in place of `claude-opus-5-5`. They follow the newest Opus without a release.
+- `codex-read`, `codex-act` and `codex-read-sandboxed` name `gpt-6.1-sol`, the Codex catalog's current default, in place of `gpt-6-sol`. Codex offers no alias, so this is a pin and moving it takes a release.
+- A caller that needs a fixed model keeps its own profile file of the same name, which comes before the shipped one, or replaces `model` for one run.
 
 ### 0.5.0
 

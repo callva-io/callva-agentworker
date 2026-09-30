@@ -49,7 +49,12 @@ def machine_folder(environ: Mapping[str, str] | None = None) -> Path:
 
 
 def shipped_folder() -> Traversable:
-    """The profiles shipped inside the package."""
+    """The profiles shipped inside the package.
+
+    The claude profiles follow the newest Opus through `opus`, Claude Code's alias
+    for it. Codex offers no alias, so the codex profiles name the Codex catalog's
+    current default, and moving them takes a release.
+    """
     return resources.files(__package__).joinpath("profiles")
 
 

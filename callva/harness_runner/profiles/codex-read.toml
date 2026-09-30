@@ -5,9 +5,13 @@
 # shell and the network, with no OS sandbox. CAPABILITIES_READ_ONLY makes every
 # capability call it makes read-only. For a read enforced by the OS, use
 # codex-read-sandboxed.
+#
+# Codex offers no alias for its newest model, so the model is pinned to the
+# catalog's current default, gpt-6.1-sol; moving it to a newer model takes a
+# release.
 
 harness = "codex"
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 effort = "medium"
 timeout_seconds = 3600
 approval_policy = "never"

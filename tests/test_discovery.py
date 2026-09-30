@@ -53,7 +53,7 @@ def test_the_machine_folder_follows_xdg_and_falls_back_to_dot_config(tmp_path):
 def test_sources_are_searched_folders_first_then_machine_then_shipped(tmp_path, machine):
     first, second = tmp_path / "first", tmp_path / "second"
     name = "claude-read"
-    assert find_profile(name, [first, second]).model == "claude-opus-5-5"  # shipped
+    assert find_profile(name, [first, second]).model == "opus"  # shipped
     write(machine, name, flat("claude", "from-machine"))
     assert find_profile(name, [first, second]).model == "from-machine"
     write(second, name, flat("claude", "from-second"))
@@ -255,7 +255,7 @@ def test_each_shipped_profile_loads_on_its_harness(machine, name):
     assert file.source == "shipped" and file.harness == harness
     profile = find_profile(name)
     assert isinstance(profile, Profile) and profile.harness == harness
-    assert profile.model == {"claude": "claude-opus-5-5", "codex": "gpt-6-sol"}[harness]
+    assert profile.model == {"claude": "opus", "codex": "gpt-6.1-sol"}[harness]
     assert profile.effort == "medium" and profile.timeout_seconds == 3600
 
 
