@@ -14,7 +14,7 @@ It does not schedule, queue, retry, or loop. It holds no ledger, no session stor
 
 The vocabulary: a harness is the vendor's agent runtime (Claude Code, the Codex CLI); a profile is one harness with its settings; a run is one turn. The library holds no queue and no long-lived consumer of work; those belong to its callers.
 
-The distribution is `callva-harness-runner` and the import path is `callva.harness_runner`: the distribution name is the import path with dashes, the same rule `callva-livekit` follows, and `callva` is a namespace package with no `__init__.py` so the two coexist in one environment. It was `callva-agentworker` (`callva.agentworker`) up to 0.2.0; the README maps each old name to its new one, and every old name is refused with a message naming the new one. The three nouns a caller uses are `Profile` (how to run), `Session` (which conversation), and `Result` (what came back). `run()` is the one verb. `probe()` answers whether a harness is present.
+The distribution is `callva-harness-runner` and the import path is `callva.harness_runner`: the distribution name is the import path with dashes, the same rule `callva-livekit` follows, and `callva` is a namespace package with no `__init__.py` so the two coexist in one environment. It was `callva-agentworker` (`callva.agentworker`) up to 0.2.0; the README maps each old name to its new one, and every old name is refused with a message naming the new one. The three nouns a caller uses are `Profile` (how to run), `Session` (which conversation), and `Result` (what came back); `Started` is what a caller learns while the turn runs. `run()` is the one verb. `probe()` answers whether a harness is present.
 
 ## 3. Harnesses
 
@@ -34,7 +34,9 @@ The knobs: `harness`, `cli_path`, `model`, `effort`, `timeout_seconds`, `budget_
 
 `Profile.from_dict()` validates against `profile.schema.json`, which ships in the package so that every consumer's configuration file is checked by the same rule. Unknown keys are refused, and the 0.1.x keys (`fence`, `allow_tools`, `env`, `extra_args`) are refused with a message naming the knobs that replace them.
 
-Hook trust on codex is a knob that is refused on both harnesses. Over `app-server` there is no way to run a hook the machine has not trusted: `bypass_hook_trust` is not a config key (`--strict-config` rejects it) and the CLI's `--dangerously-bypass-hook-trust`, accepted before `app-server`, does not make an untrusted hook run, although the same hook runs under `codex exec` with it. Hooks the machine trusts run.
+`bypass_hook_trust` runs a codex project's hooks from the profile alone, on a machine that has never trusted the project or its hooks, and persists nothing. Codex loads a project's `.codex` layer, `hooks.json` included, only for a trusted project, and runs a loaded hook only when `config.toml` holds its trusted hash (`hooks.state."<hooks.json path>:<event>:<group>:<handler>".trusted_hash`, a hash of the handler that `hooks/list` reports as `currentHash`); an interactive session writes both. The knob sets neither in `config.toml`. It adds two keys to the thread's config, on start and on resume: `projects.<root>.trust_level = "trusted"` for the project root codex keys trust by (the nearest directory at or above the working directory holding `.git`, else the working directory, under its path as given and as resolved), and `bypass_hook_trust = true`, which the app-server accepts as a thread override although `config.toml` does not. Measured on 0.159.0: with both, a never-trusted project's `SessionStart` hook runs and `config.toml` is byte-identical afterwards; with the bypass alone the hook is not even loaded; the CLI's `--dangerously-bypass-hook-trust` before `app-server` does neither. Trusting the project also loads its `.codex/config.toml`, as an interactively trusted project would. On claude the knob is refused: claude has no hook trust.
+
+`python -m callva.harness_runner knobs [--harness claude|codex]` prints every knob with its type, allowed values, default and what it does on each harness, read at runtime from the knob's homes: type and allowed values from `profile.schema.json`, the default from the `Profile` field, and the meaning from the field's docstring, split at its `Claude:`, `Codex:` and `Both:` labels. A docstring therefore opens with what holds on both harnesses and labels what differs. `profiles check FILE` reads one profile file as `find_profile` would and prints `ok` with its harness, or the refusal naming the knob with exit status 2.
 
 ### Environment
 
@@ -62,7 +64,9 @@ The shipped profiles are `claude-read`, `claude-act`, `claude-read-sandboxed`, `
 
 ## 7. Running
 
-The turn runs on a thread of its own; the calling thread holds the deadline and the cancel. The launcher records the harness's pid and command line and makes the harness a session leader. When the deadline passes or the caller's `threading.Event` is set, the library first writes a stop file that the launcher checks before any later start, then finds the harness's tree three ways: by parentage from the harness, by the process groups of what it found, and by the sessions of what it found, the harness's own included. The harnesses give each tool command a process group of its own, and a command that backgrounds a child and exits leaves that child with its group and session but a new parent, so parentage alone would miss it. The tree gets SIGTERM, three seconds, then SIGKILL; the caller's own group and session are never touched. Then the SDK is closed.
+The turn runs on a thread of its own; the calling thread holds the deadline and the cancel. The launcher records the harness's pid and command line, makes the harness a session leader, and, once the stop file no longer stops it, records that the harness is starting.
+
+`run(on_start=...)` receives a `Started` (`harness`, `pid`, `session_id`) exactly once for a run whose harness process started, and never for one where none did (no CLI, a refused version, a stop before the start). `pid` is the harness the launcher started, the leader of its own session and process group, so a service that restarts after its own crash can end an orphaned tree. `session_id` is claude's pinned or resumed id, or codex's thread id once `thread/start` or `thread/resume` has answered. It is called as soon as both are known, from the watching thread or from the turn's thread, and returns before the first `on_event`; a harness that ended before codex gave a thread id is reported once when the turn ends, with `session_id` `None`. An exception it raises is swallowed: the callback never ends or alters the turn. When the deadline passes or the caller's `threading.Event` is set, the library first writes a stop file that the launcher checks before any later start, then finds the harness's tree three ways: by parentage from the harness, by the process groups of what it found, and by the sessions of what it found, the harness's own included. The harnesses give each tool command a process group of its own, and a command that backgrounds a child and exits leaves that child with its group and session but a new parent, so parentage alone would miss it. The tree gets SIGTERM, three seconds, then SIGKILL; the caller's own group and session are never touched. Then the SDK is closed.
 
 A caller killed outright cannot do any of this, and the harness's tree outlives it.
 
@@ -78,7 +82,7 @@ When `output_schema` is given and the harness returned no structured field, the 
 
 | Field | Meaning |
 |---|---|
-| `ok` | the harness confirmed a completed turn: claude `subtype == "success"` and `is_error` false; codex status `completed`, no error, and a non-empty answer. |
+| `ok` | the harness confirmed a completed turn: claude `subtype == "success"` and `is_error` false; codex status `completed` and no error. On either harness a completed turn may end without a final message, as a worker that answered by a side channel does: it is `ok` with an empty `answer`, unless `output_schema` required one. |
 | `harness` | which harness ran. |
 | `answer` | the final text, possibly empty on failure. |
 | `structured` | the parsed structured answer, or `None`. |
@@ -102,7 +106,7 @@ Classification reads the harness's own verdict first (claude's `error_max_turns`
 
 ## 11. Constraints worth knowing
 
-The cost claude reports is its own estimate and includes subagents; a turn that dies reports no cost at all, so an accumulated total is a floor. Codex under ChatGPT authentication reports tokens but no cost. A profile with no knobs runs the harness exactly as the machine configures it: user settings, hooks and MCP servers included. Hooks on codex run only when the machine trusts them.
+The cost claude reports is its own estimate and includes subagents; a turn that dies reports no cost at all, so an accumulated total is a floor. Codex under ChatGPT authentication reports tokens but no cost. A profile with no knobs runs the harness exactly as the machine configures it: user settings, hooks and MCP servers included. Hooks on codex run only when the machine trusts them, unless the profile sets `bypass_hook_trust`.
 
 ## 12. Versioning
 

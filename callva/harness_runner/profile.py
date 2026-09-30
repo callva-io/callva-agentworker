@@ -77,9 +77,9 @@ class Profile:
     (Codex through openai-codex)."""
 
     cli_path: str | None = None
-    """The harness CLI to run. Claude: passed to the SDK as the CLI it launches. Codex: the
-    binary whose `app-server` the SDK talks to. `None` finds the installed CLI on `PATH` and in
-    the usual install places; the CLI bundled inside either SDK is never used."""
+    """The harness CLI to run. `None` finds the installed CLI on `PATH` and in the usual
+    install places; the CLI bundled inside either SDK is never used. Claude: passed to the SDK
+    as the CLI it launches. Codex: the binary whose `app-server` the SDK talks to."""
 
     model: str | None = None
     """Claude: `--model`. Codex: the thread's model."""
@@ -134,9 +134,9 @@ class Profile:
     directory. Codex: refused; give a directory access in the permissions of `codex_config`."""
 
     append_system_prompt: str | None = None
-    """Claude: appended to the Claude Code system prompt, which is always kept. Codex: the
-    thread's developer instructions, added beside codex's own instructions. Neither harness's
-    system prompt is ever replaced."""
+    """Neither harness's system prompt is ever replaced. Claude: appended to the Claude Code
+    system prompt, which is always kept. Codex: the thread's developer instructions, added
+    beside codex's own instructions."""
 
     output_schema: Mapping[str, Any] | None = None
     """Both: a JSON schema the final answer must satisfy (claude `--json-schema`, codex turn
@@ -172,10 +172,14 @@ class Profile:
     """Codex: the thread's service tier. Claude: refused."""
 
     bypass_hook_trust: bool = False
-    """Codex: refused when true. The app-server this library drives has no way to run hooks the
-    machine has not trusted: `bypass_hook_trust` is not a config key there, and the CLI's
-    `--dangerously-bypass-hook-trust` has no effect on it (measured on 0.159.0). Hooks the
-    machine trusts run. Claude: refused; claude has no hook trust."""
+    """Codex: run the project's hooks (`.codex/hooks.json`) on any machine, with no trust
+    recorded there beforehand and nothing written to it. For this thread only, the project the
+    working directory belongs to (the nearest directory holding `.git`, else the working
+    directory) is trusted, so its `.codex` config layer and hooks load, and the app-server's
+    thread override `bypass_hook_trust` runs them without hook trust. The user's
+    `config.toml` is never written. False leaves the machine's own trust in place: a project's
+    hooks run only when codex trusts the project and each hook. Claude: refused; claude has no
+    hook trust."""
 
     claude_extra_args: Mapping[str, str | None] = field(default_factory=dict)
     """Claude: extra CLI flags, `{"flag": "value"}` or `{"flag": None}` for a bare flag, for a
@@ -264,13 +268,8 @@ def _refuse_for_harness(profile: Profile) -> None:
                 f"profile.{name}: {harness} cannot honour it; it is a "
                 f"{'codex' if harness == 'claude' else 'claude'} knob"
             )
-    if profile.bypass_hook_trust:
-        if harness == "claude":
-            raise ProfileError("profile.bypass_hook_trust: claude has no hook trust to bypass")
-        raise ProfileError(
-            "profile.bypass_hook_trust: codex app-server cannot honour it; there is no hook-trust "
-            "bypass over app-server, so trust the hooks in codex itself"
-        )
+    if profile.bypass_hook_trust and harness == "claude":
+        raise ProfileError("profile.bypass_hook_trust: claude has no hook trust to bypass")
     overlap = [name for name in profile.env_set if _matches(name, profile.env_remove)]
     if overlap:
         raise ProfileError(

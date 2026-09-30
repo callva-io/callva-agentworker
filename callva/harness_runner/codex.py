@@ -8,6 +8,7 @@ codex says whether a failure was a spent quota, a refused login or a budget.
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,13 +35,42 @@ def config(profile: Profile, *, launcher: str, cwd: str, env: dict[str, str]) ->
     return CodexConfig(launch_args_override=args, cwd=cwd, env=env or None)
 
 
+def project_root(cwd: str) -> str:
+    """The project codex keys trust by for `cwd`: the nearest directory at or above it that
+    holds `.git`, else `cwd` itself."""
+    start = os.path.abspath(cwd)
+    here = start
+    while True:
+        if os.path.exists(os.path.join(here, ".git")):
+            return here
+        parent = os.path.dirname(here)
+        if parent == here:
+            return start
+        here = parent
+
+
+def trusted_projects(cwd: str) -> dict[str, Any]:
+    """`projects` entries that trust the project `cwd` belongs to, under its path as given and
+    as resolved."""
+    root = project_root(cwd)
+    return {path: {"trust_level": "trusted"} for path in (root, os.path.realpath(root))}
+
+
 def thread_options(profile: Profile, *, cwd: str) -> dict[str, Any]:
     """The keyword arguments of `thread_start` and `thread_resume` a profile sets."""
     opts: dict[str, Any] = {"cwd": cwd}
     if profile.model:
         opts["model"] = profile.model
-    if profile.codex_config:
-        opts["config"] = dict(profile.codex_config)
+    config = dict(profile.codex_config or {})
+    if profile.bypass_hook_trust:
+        # The project's hooks run for this thread only, with nothing persisted: the project is
+        # trusted, so its `.codex` layer and `hooks.json` load, and `bypass_hook_trust`, which
+        # the app-server takes as a thread override though `config.toml` does not, runs its
+        # hooks without the machine's hook trust.
+        config["bypass_hook_trust"] = True
+        config["projects"] = {**dict(config.get("projects") or {}), **trusted_projects(cwd)}
+    if config:
+        opts["config"] = config
     if profile.append_system_prompt:
         opts["developer_instructions"] = profile.append_system_prompt
     if profile.service_tier:

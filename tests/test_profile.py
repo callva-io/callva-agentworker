@@ -79,9 +79,8 @@ def test_an_empty_tools_list_is_a_claude_setting():
         Profile(harness="codex", tools=[])
 
 
-def test_hook_trust_bypass_is_refused_on_both_harnesses():
-    with pytest.raises(ProfileError, match="no hook-trust bypass over app-server"):
-        Profile(harness="codex", bypass_hook_trust=True)
+def test_hook_trust_bypass_is_a_codex_knob_refused_on_claude():
+    assert Profile(harness="codex", bypass_hook_trust=True).bypass_hook_trust is True
     with pytest.raises(ProfileError, match="claude has no hook trust"):
         Profile(harness="claude", bypass_hook_trust=True)
 

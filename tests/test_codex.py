@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from conftest import fake
 
@@ -86,7 +88,6 @@ def test_a_pinned_session_is_refused(fake_env, tmp_path):
     ("badmodel", FailureKind.MODEL_REFUSED),
     ("http429", FailureKind.QUOTA),
     ("budget", FailureKind.BUDGET),
-    ("empty", FailureKind.ERROR),
     ("crash", FailureKind.CRASH),
 ])
 def test_failures_map_to_their_kind(fake_env, tmp_path, mode, kind):
@@ -104,3 +105,48 @@ def test_structured_answer_that_does_not_parse(fake_env, tmp_path):
     result = run("x", codex(output_schema={"type": "object"}), tmp_path,
                  environ={**fake_env, "FAKE_CODEX": "prose_under_schema"})
     assert result.failure.kind == FailureKind.INVALID_OUTPUT and result.answer == "just prose"
+
+
+def test_a_completed_turn_without_a_final_message_is_ok_and_silent(fake_env, tmp_path):
+    result = run("x", codex(), tmp_path, environ={**fake_env, "FAKE_CODEX": "empty"})
+    assert result.ok and result.failure is None and result.answer == ""
+    assert result.raw["turn"]["status"] == "completed"
+
+
+def test_a_silent_turn_under_a_schema_is_invalid_output(fake_env, tmp_path):
+    result = run("x", codex(output_schema={"type": "object"}), tmp_path,
+                 environ={**fake_env, "FAKE_CODEX": "empty"})
+    assert not result.ok and result.failure.kind == FailureKind.INVALID_OUTPUT
+
+
+def test_bypass_hook_trust_trusts_the_project_and_its_hooks_for_the_thread(
+        fake_env, record, tmp_path):
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    work = project / "sub"
+    work.mkdir()
+    config = {"sandbox_mode": "read-only", "projects": {"/elsewhere": {"trust_level": "trusted"}}}
+    first = run("x", codex(bypass_hook_trust=True, codex_config=config), work, environ=fake_env)
+    assert first.ok, first.failure
+    trusted = {"trust_level": "trusted"}
+    expected = {"sandbox_mode": "read-only", "bypass_hook_trust": True,
+                "projects": {"/elsewhere": trusted, str(project): trusted,
+                             os.path.realpath(project): trusted}}
+    [start] = requests(record, "thread/start")
+    assert start["config"] == expected
+    run("y", codex(bypass_hook_trust=True, codex_config=config), work, environ=fake_env,
+        session=Session.resume(first.session_id))
+    [resume] = requests(record, "thread/resume")
+    assert resume["config"] == expected
+
+
+def test_the_trusted_project_is_the_nearest_git_root_else_the_working_directory(tmp_path):
+    from callva.harness_runner.codex import project_root
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    deep = tmp_path / "repo" / "a" / "b"
+    deep.mkdir(parents=True)
+    assert project_root(str(deep)) == str(tmp_path / "repo")
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    if not any((parent / ".git").exists() for parent in loose.parents):
+        assert project_root(str(loose)) == str(loose)

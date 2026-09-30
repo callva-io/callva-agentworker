@@ -18,7 +18,7 @@ from .binaries import find_binary
 from .classify import classify, unwrap_harness_message
 from .launch import CLAUDE_SDK_OWNED, Launch, plan_env
 from .profile import SESSION_MARKERS, Profile, Session
-from .result import Failure, FailureKind, Result, Tokens
+from .result import Failure, FailureKind, Result, Started, Tokens
 
 # How long a turn that was stopped may take to hand back what it had, once its
 # processes are dead.
@@ -61,12 +61,64 @@ class _Stopped:
         return self.timed_out or self.cancelled
 
 
+class _StartNotice:
+    """Tells the caller once that the harness runs, as soon as its pid and its session id
+    are both known.
+
+    It is asked from the supervising thread on every tick and from the turn's thread before
+    every event, and the caller's callback runs under the lock, so it has returned before the
+    first event is handed on. `final` reports a harness that ran but ended before its session
+    id was known.
+    """
+
+    def __init__(self, harness: str, launch: Launch,
+                 on_start: Callable[[Started], None] | None,
+                 session_id: Callable[[], str | None]) -> None:
+        self.harness = harness
+        self.launch = launch
+        self.on_start = on_start
+        self.session_id = session_id
+        self.lock = threading.Lock()
+        self.done = on_start is None
+
+    def __call__(self, *, final: bool = False) -> None:
+        if self.done:
+            return
+        with self.lock:
+            if self.done:
+                return
+            pid = self.launch.harness_pid()
+            if pid is None:
+                return
+            session_id = self.session_id()
+            if session_id is None and not final:
+                return
+            # A caller's callback never ends or alters the turn.
+            with contextlib.suppress(Exception):
+                self.on_start(Started(self.harness, pid, session_id))
+            self.done = True
+
+    def events(self, on_event: Callable[[dict], None] | None) -> Callable[[dict], None] | None:
+        """`on_event`, preceded by this notice."""
+        if self.on_start is None:
+            return on_event
+
+        def handed_on(event: dict) -> None:
+            self()
+            if on_event is not None:
+                on_event(event)
+
+        return handed_on
+
+
 def _supervise(work: Callable[[], None], launch: Launch, *, timeout: float,
-               cancel: threading.Event | None, on_stop: Callable[[], None]) -> _Stopped:
+               cancel: threading.Event | None, on_stop: Callable[[], None],
+               tick: Callable[[], None] = lambda: None) -> _Stopped:
     """Run `work` on a thread and end it at the deadline or on cancel.
 
     Ending it means refusing any later harness start, killing every process the
-    harness started, and then letting the SDK notice and unwind.
+    harness started, and then letting the SDK notice and unwind. `tick` runs on
+    every turn of the watch.
     """
     ending = _Stopped()
     thread = threading.Thread(target=work, name="harness-run", daemon=True)
@@ -79,6 +131,7 @@ def _supervise(work: Callable[[], None], launch: Launch, *, timeout: float,
         if time.monotonic() >= deadline:
             ending.timed_out = True
             break
+        tick()
         thread.join(0.05)
     if ending.stopped:
         tree.kill_tree(launch.stop())
@@ -100,6 +153,7 @@ def run(
     on_event: Callable[[dict], None] | None = None,
     cancel: threading.Event | None = None,
     stderr_tail: int = 40,
+    on_start: Callable[[Started], None] | None = None,
 ) -> Result:
     """Run one headless turn and return what came of it.
 
@@ -110,7 +164,10 @@ def run(
     `environ` is the environment the harness starts from (default: this
     process's); `extra_env` is set on top of it and of the profile's `env_set`.
     `on_event` receives one dict per harness event while the turn runs. Setting
-    `cancel` ends the turn early and kills its processes.
+    `cancel` ends the turn early and kills its processes. `on_start` receives a
+    `Started` (the harness's pid and the session id) once, when the harness
+    process runs and the session id is known, before the first `on_event`; it is
+    not called when no harness process started.
     """
     session = session or Session.fresh()
     harness = profile.harness
@@ -142,9 +199,9 @@ def run(
     try:
         if harness == "claude":
             return _run_claude(prompt, profile, workdir, launch, plan.set, session, on_event,
-                               cancel, stderr_tail, context)
+                               cancel, stderr_tail, context, on_start)
         return _run_codex(prompt, profile, workdir, launch, plan.set, session, on_event,
-                          cancel, stderr_tail, context)
+                          cancel, stderr_tail, context, on_start)
     finally:
         launch.close()
 
@@ -156,7 +213,7 @@ def _stopped_failure(ending: _Stopped, profile: Profile) -> Failure:
 
 
 def _run_claude(prompt, profile, cwd, launch, env, session, on_event, cancel, stderr_tail,
-                context) -> Result:
+                context, on_start) -> Result:
     resume_id = session.id if session.kind == "resume" else None
     session_id = session.id if session.kind == "pinned" else None
     if session.kind == "fresh":
@@ -165,10 +222,13 @@ def _run_claude(prompt, profile, cwd, launch, env, session, on_event, cancel, st
     opts = claude.options(profile, cli_path=str(launch.wrapper), cwd=cwd, env=env,
                           session_id=session_id, resume_id=resume_id,
                           stderr=outcome.stderr.append)
+    notice = _StartNotice("claude", launch, on_start, lambda: session_id or resume_id)
+    events = notice.events(on_event)
     started = time.monotonic()
-    ending = _supervise(lambda: asyncio.run(claude.turn(prompt, opts, outcome, on_event)),
+    ending = _supervise(lambda: asyncio.run(claude.turn(prompt, opts, outcome, events)),
                         launch, timeout=profile.timeout_seconds, cancel=cancel,
-                        on_stop=lambda: None)
+                        on_stop=lambda: None, tick=notice)
+    notice(final=True)
     elapsed = int((time.monotonic() - started) * 1000)
     fields = claude.read(outcome.result) if outcome.result is not None else {}
     common = {
@@ -224,23 +284,26 @@ def _run_claude(prompt, profile, cwd, launch, env, session, on_event, cancel, st
 
 
 def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, stderr_tail,
-               context) -> Result:
+               context, on_start) -> Result:
     resume_id = session.id if session.kind == "resume" else None
     outcome = codex.Outcome()
     cfg = codex.config(profile, launcher=str(launch.wrapper), cwd=cwd, env=env)
     clients: list = []
+    notice = _StartNotice("codex", launch, on_start, lambda: outcome.thread_id)
+    events = notice.events(on_event)
     started = time.monotonic()
 
     def work() -> None:
         codex.run_turn(prompt, profile, cfg=cfg, cwd=cwd, resume_id=resume_id, outcome=outcome,
-                       on_client=clients.append, on_event=on_event)
+                       on_client=clients.append, on_event=events)
 
     def unblock() -> None:
         for client in clients:
             client.close()
 
     ending = _supervise(work, launch, timeout=profile.timeout_seconds, cancel=cancel,
-                        on_stop=unblock)
+                        on_stop=unblock, tick=notice)
+    notice(final=True)
     elapsed = int((time.monotonic() - started) * 1000)
     answer = codex.answer(outcome)
     turn = outcome.turn or {}
@@ -269,7 +332,7 @@ def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, std
                       **common)
     status = turn.get("status")
     error = codex.turn_error(outcome)
-    if status == "completed" and error is None and answer:
+    if status == "completed" and error is None:
         structured = None
         if profile.output_schema:
             structured, got = _structured(answer, None)
@@ -284,8 +347,5 @@ def _run_codex(prompt, profile, cwd, launch, env, session, on_event, cancel, std
         if kind is None:
             kind = classify(message, http_status=http_status)
         return Result(ok=False, failure=Failure(kind, message), **common)
-    if status == "completed":
-        return Result(ok=False, failure=Failure(
-            FailureKind.ERROR, "the turn completed without a final message"), **common)
     return Result(ok=False, failure=Failure(FailureKind.ERROR, f"the turn ended {status}"),
                   **common)

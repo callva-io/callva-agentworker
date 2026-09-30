@@ -29,7 +29,7 @@ In a PEP 723 script, pin the exact version so nothing outside the script's own r
 
 ```python
 # /// script
-# dependencies = ["callva-harness-runner==0.6.0"]
+# dependencies = ["callva-harness-runner==0.7.0"]
 # ///
 ```
 
@@ -48,13 +48,14 @@ else:
 
 `run()` never raises for anything the harness did. Every ending is a `Result`; `result.failure.kind` says what kind, and `result.failure.message` carries the harness's own sentence. It raises `ValueError` only for a request it cannot express, such as a pinned session on codex.
 
-`run(prompt, profile, cwd, *, session=None, environ=None, extra_env=None, on_event=None, cancel=None, stderr_tail=40)`:
+`run(prompt, profile, cwd, *, session=None, environ=None, extra_env=None, on_event=None, cancel=None, stderr_tail=40, on_start=None)`:
 
 - `session`: `Session.fresh()` (the default), `Session.pinned(id)` or `Session.resume(id)`, below.
 - `environ`: the environment the harness starts from; this process's by default. A variable absent from it is absent in the harness, even though both SDKs inherit this process's environment.
 - `extra_env`: variables set on top of `environ` and the profile's `env_set`.
 - `on_event`: called with one dict per harness event while the turn runs. On claude it is the SDK's message: a system message is the harness's own event (`subtype` `init` carries `apiKeySource`, `model` and `claude_code_version`), any other message is its fields plus `type`, the SDK class name. On codex it is `{"method", "params"}`, one app-server notification.
 - `cancel`: a `threading.Event`; setting it ends the turn and kills its processes.
+- `on_start`: called once with a `Started` as soon as the harness process runs and its session id is known, before the first `on_event`: `started.harness`, `started.pid` (the harness process, the leader of its own session and process group, so a service that restarts after a crash of its own can end an orphaned tree) and `started.session_id` (claude's pinned or resumed id, codex's thread id). It is not called when no harness process started, such as a missing CLI. A harness that ended before codex gave a thread id is reported when the turn ends, with `session_id` `None`. An exception it raises never ends or alters the turn.
 
 ## Profile
 
@@ -86,7 +87,7 @@ A profile is a flat set of explicit knobs. There is no inheritance and no fence.
 | `codex_config` | refused: use `settings` | the thread's config, keyed as in `config.toml`: permission profiles, `sandbox_mode`, network, `mcp_servers` |
 | `approval_policy` | refused: use `permission_mode` | `never` (escalations refused) or `auto_review` (codex's reviewer decides); `None` is the SDK default, `auto_review` |
 | `service_tier` | refused | the thread's service tier |
-| `bypass_hook_trust` | refused: claude has no hook trust | refused when true: the app-server has no hook-trust bypass, so hooks run only when the machine trusts them |
+| `bypass_hook_trust` | refused: claude has no hook trust | run the project's `.codex/hooks.json` hooks on any machine with no trust recorded there: the project is trusted and hook trust bypassed for this thread only, and `config.toml` is never written |
 | `claude_extra_args` | extra CLI flags, `{"flag": "value"}` or `{"flag": None}` | refused |
 | `codex_extra_args` | refused | arguments before `app-server`, such as `["-c", "key=value"]` |
 
@@ -128,7 +129,9 @@ The file found is used whole, with the harness it names: no merging and no inher
 
 `ProfileNotFound`, a `ProfileError`, means no source has the name. For `read`, `act` and `read-sandboxed` its message names the harness-prefixed profiles that replace them.
 
-From a shell, `python -m callva.harness_runner profiles` prints the listing as JSON, and `python -m callva.harness_runner profiles show NAME` prints the file a lookup resolves to, after a comment line naming its source and path and one naming its harness. Both take `--folder DIR`, once per folder, in search order.
+From a shell, `python -m callva.harness_runner profiles` prints the listing as JSON, and `python -m callva.harness_runner profiles show NAME` prints the file a lookup resolves to, after a comment line naming its source and path and one naming its harness. Both take `--folder DIR`, once per folder, in search order. `python -m callva.harness_runner profiles check FILE` validates one profile file: it prints `ok` with the file's harness, or the refusal naming the knob and exits 2.
+
+`python -m callva.harness_runner knobs` prints every knob with its type, allowed values, default and what it does on each harness; `--harness claude` or `--harness codex` shows one harness. It reads `profile.schema.json` and the docstrings on `Profile` at runtime, so it always matches the installed version.
 
 ### Shipped profiles
 
@@ -162,7 +165,7 @@ The launcher makes the harness a session leader. When the deadline passes, or `c
 
 | Field | Meaning |
 |---|---|
-| `ok` | the harness confirmed a completed turn with an answer |
+| `ok` | the harness confirmed a completed turn; one that completed without a final message is `ok` with an empty `answer`, unless `output_schema` required one |
 | `harness` | `claude` or `codex` |
 | `answer` | the final text |
 | `structured` | the parsed answer when `output_schema` was given |
@@ -185,6 +188,15 @@ The launcher makes the harness a session leader. When the deadline passes, or `c
 `quota`, `model_refused`, `not_authenticated`, `timeout`, `cancelled`, `binary_missing`, `max_turns`, `budget`, `invalid_output`, `error`, `crash`, `incompatible_harness`. The harness's own verdict is read first (claude's result subtype, codex's `codexErrorInfo`), then an HTTP status it reports, then its sentence: a spent quota before a refused model, because a subscription spent on one model says both and only one of them is a pause. A claude turn that times out while the harness is retrying a 401 or a 429 is `not_authenticated` or `quota`. `failure.retryable` is true for the kinds where running the same turn again later can succeed.
 
 ## Changelog
+
+### 0.7.0
+
+What a long-running service needs to launch turns with no launch code of its own. Additive: everything in 0.6.0 works unchanged, except that a silent codex turn is no longer a failure.
+
+- `run(on_start=...)` receives a `Started` (`harness`, `pid`, `session_id`) once the harness process runs, before the first event, so a service can end an orphaned tree after its own crash or amend a turn still running.
+- A codex turn that completes with no error and no final message is `ok` with an empty `answer`, as on claude; it was an `error` failure. With `output_schema` it is still `invalid_output`.
+- `bypass_hook_trust` is honoured on codex: the project's hooks run on any machine with nothing trusted beforehand and nothing persisted. It was refused.
+- `python -m callva.harness_runner knobs` describes every knob, and `profiles check FILE` validates a profile file.
 
 ### 0.6.0
 

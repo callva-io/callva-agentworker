@@ -57,6 +57,22 @@ class Tokens:
 
 
 @dataclass(frozen=True)
+class Started:
+    """What `run(on_start=...)` receives once the turn's harness process runs.
+
+    `pid` is the harness process the launcher started, the leader of its own
+    session and process group, so a caller that outlives a crash of its own can
+    still find and end the tree. `session_id` is the claude session id or the
+    codex thread id the turn runs in; `None` only when the harness ended before
+    codex gave a thread id.
+    """
+
+    harness: str
+    pid: int
+    session_id: str | None
+
+
+@dataclass(frozen=True)
 class Result:
     ok: bool
     harness: str

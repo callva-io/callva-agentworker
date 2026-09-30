@@ -5,7 +5,8 @@ inherit. This script sits where the SDK expects the CLI, and on every start:
 removes the variables the profile removes, records its pid and argv when this
 is the turn's harness and not a version probe, starts a new session so the
 harness and everything it starts can be killed as one, refuses to start when the
-turn has already been stopped, and then becomes the real CLI.
+turn has already been stopped, records that the harness is starting, and then
+becomes the real CLI.
 
 It runs with `python -I -S` and imports nothing from the package, so it starts
 fast and the package's dependencies never load in it. It takes one argument
@@ -42,6 +43,11 @@ def main() -> None:
             os.setsid()
     if os.path.exists(spec["stop"]):
         sys.exit(143)
+    if spec["marker"] in argv and spec.get("exec"):
+        # Written only past the stop check: this harness is about to run, so a
+        # caller told it started can rely on it.
+        with open(spec["exec"], "a") as fh:
+            fh.write(json.dumps({"pid": os.getpid()}) + "\n")
     os.execve(spec["binary"], [spec["binary"], *argv], env)
 
 

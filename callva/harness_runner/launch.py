@@ -71,6 +71,7 @@ class Launch:
         self.pidfile = self.dir / "started.jsonl"
         self.stopfile = self.dir / "stop"
         self.specfile = self.dir / "spec.json"
+        self.execfile = self.dir / "exec.jsonl"
         self.wrapper = self.dir / harness
         spec = {
             "binary": binary,
@@ -80,6 +81,7 @@ class Launch:
             "remove_patterns": list(plan.remove_patterns),
             "pidfile": str(self.pidfile),
             "stop": str(self.stopfile),
+            "exec": str(self.execfile),
         }
         self.specfile.write_text(json.dumps(spec))
         python = sys.executable or shutil.which("python3") or "python3"
@@ -101,6 +103,17 @@ class Launch:
             with contextlib.suppress(ValueError):
                 records.append(json.loads(line))
         return records
+
+    def harness_pid(self) -> int | None:
+        """The pid of the first harness that passed the stop check and became the CLI."""
+        try:
+            lines = self.execfile.read_text().splitlines()
+        except OSError:
+            return None
+        for line in lines:
+            with contextlib.suppress(ValueError, KeyError, TypeError):
+                return int(json.loads(line)["pid"])
+        return None
 
     def stop(self) -> list[int]:
         """Refuse any later start, then name the harness processes that did start."""

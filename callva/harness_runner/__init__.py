@@ -33,7 +33,7 @@ from .profile import (
     validate_profile,
 )
 from .renamed import refuse_module_attribute
-from .result import Failure, FailureKind, Result, Tokens
+from .result import Failure, FailureKind, Result, Started, Tokens
 from .run import run
 from .version import __version__
 
@@ -57,6 +57,7 @@ __all__ = [
     "ProfileNotFound",
     "Result",
     "Session",
+    "Started",
     "Tokens",
     "__version__",
     "find_binary",
