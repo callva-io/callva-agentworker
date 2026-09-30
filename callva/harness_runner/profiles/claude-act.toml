@@ -1,0 +1,11 @@
+# Profile "claude-act": a task to carry out in a project, on claude.
+#
+# The run has full access: every tool without a permission prompt. It may
+# edit, run tests, commit and push from inside the target project.
+
+harness = "claude"
+model = "claude-opus-5-5"
+effort = "medium"
+timeout_seconds = 3600
+permission_mode = "bypassPermissions"
+append_system_prompt = "You are running with full write access inside THIS target project. Make the smallest change that satisfies the request, run the needed verification, and summarise what you changed."

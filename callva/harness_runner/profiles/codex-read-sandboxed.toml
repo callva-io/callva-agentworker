@@ -1,0 +1,25 @@
+# Profile "codex-read-sandboxed": a research question in a project, on codex,
+# with the read enforced by the operating system rather than by instruction.
+#
+# The run's working directory, the target project, cannot be written. The
+# network, ~/.cache and the temporary directory stay writable, so CLIs that
+# fetch, cache or build in a temporary place keep working.
+#
+# A named permissions profile extending :read-only, with ~/.cache and the
+# temporary directory writable and the network on.
+
+harness = "codex"
+model = "gpt-6-sol"
+effort = "medium"
+timeout_seconds = 3600
+approval_policy = "never"
+append_system_prompt = "This is a READ-ONLY research query. Change nothing: no file writes or edits, no commits, and no state changes in this project or in any system you reach. Read, run read-only commands, and answer."
+env_set = { CAPABILITIES_READ_ONLY = "1" }
+
+[codex_config]
+default_permissions = "read-sandboxed"
+
+[codex_config.permissions.read-sandboxed]
+extends = ":read-only"
+filesystem = { "~/.cache" = "write", ":tmpdir" = "write" }
+network = { enabled = true }

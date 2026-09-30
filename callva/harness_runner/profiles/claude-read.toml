@@ -1,26 +1,17 @@
-# Profile "read": a research question in a project the run must not change.
+# Profile "claude-read": a research question in a project the run must not
+# change, on claude.
 #
 # The run is held to reading by instruction alone. It has every tool, a full
 # shell and the network, with no tool fence and no OS sandbox, and it loads the
 # target project's own context. CAPABILITIES_READ_ONLY makes every capability
-# call it makes read-only. For a read enforced by the OS, use read-sandboxed.
-#
-# One table per harness; the table name is the harness.
+# call it makes read-only. For a read enforced by the OS, use
+# claude-read-sandboxed.
 
-[claude]
+harness = "claude"
 model = "claude-opus-5-5"
 effort = "medium"
 timeout_seconds = 3600
 permission_mode = "bypassPermissions"
 setting_sources = ["project", "local"]
-append_system_prompt = "This is a READ-ONLY research query. Change nothing: no file writes or edits, no commits, and no state changes in this project or in any system you reach. Read, run read-only commands, and answer."
-env_set = { CAPABILITIES_READ_ONLY = "1" }
-
-[codex]
-model = "gpt-6-sol"
-effort = "medium"
-timeout_seconds = 3600
-approval_policy = "never"
-codex_config = { sandbox_mode = "danger-full-access" }
 append_system_prompt = "This is a READ-ONLY research query. Change nothing: no file writes or edits, no commits, and no state changes in this project or in any system you reach. Read, run read-only commands, and answer."
 env_set = { CAPABILITIES_READ_ONLY = "1" }

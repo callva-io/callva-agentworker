@@ -1,6 +1,6 @@
 # callva-harness-runner
 
-One run of an agent harness, as a Python library. A harness is the vendor's agent runtime: Claude Code, driven through Anthropic's `claude-agent-sdk`, or the Codex CLI, driven through OpenAI's `openai-codex`, always the CLI installed on the machine. A profile is one harness configuration, a flat set of explicit knobs. A run is one turn: a prompt goes in, the harness works to its end or its deadline, and one `Result` comes out, with the failure named. The deadline kills everything the harness started. What a run may do is whatever its profile says, and nothing else; the library never decides it. It ships three profiles, `read`, `act` and `read-sandboxed`, that a caller loads by name, and a caller's own profile files of the same name come first.
+One run of an agent harness, as a Python library. A harness is the vendor's agent runtime: Claude Code, driven through Anthropic's `claude-agent-sdk`, or the Codex CLI, driven through OpenAI's `openai-codex`, always the CLI installed on the machine. A profile is one harness with its settings, a flat set of explicit knobs. A run is one turn: a prompt goes in, the harness works to its end or its deadline, and one `Result` comes out, with the failure named. The deadline kills everything the harness started. What a run may do is whatever its profile says, and nothing else; the library never decides it. A caller names a profile and never a harness: the profile names its harness. It ships six profiles, `claude-read`, `claude-act`, `claude-read-sandboxed`, `codex-read`, `codex-act` and `codex-read-sandboxed`, that a caller loads by name, and a caller's own profile files of the same name come first.
 
 `DESIGN.md` is the contract. The source is at https://github.com/callva-io/harness-runner.
 
@@ -29,7 +29,7 @@ In a PEP 723 script, pin the exact version so nothing outside the script's own r
 
 ```python
 # /// script
-# dependencies = ["callva-harness-runner==0.4.0"]
+# dependencies = ["callva-harness-runner==0.5.0"]
 # ///
 ```
 
@@ -94,13 +94,21 @@ Claude always runs on the `claude_code` system-prompt preset, so a turn has the 
 
 ### Profiles by name
 
-A profile file is TOML with one table per harness, `[claude]` and `[codex]`, each holding that harness's knobs. The table name is the harness: a `harness` key inside it may be left out, and when present it must match, or the file is refused. Nothing else may sit at the top of the file.
+A profile file holds one profile, so one harness: flat TOML with a required top-level `harness = "claude"` or `harness = "codex"` and that harness's knobs beside it. A knob that is an object, such as `settings` or `codex_config`, may be written as a TOML table. A file with a `[claude]` or `[codex]` table, or without a top-level `harness`, is refused with a `ProfileError` that names this form.
+
+```toml
+harness = "codex"
+model = "gpt-6-sol"
+effort = "medium"
+approval_policy = "never"
+codex_config = { sandbox_mode = "danger-full-access" }
+```
 
 ```python
 from callva.harness_runner import find_profile, run
 import dataclasses
 
-profile = find_profile("read-sandboxed", "codex", ["capabilities/myapp/profiles"])
+profile = find_profile("codex-read-sandboxed", ["capabilities/myapp/profiles"])
 profile = dataclasses.replace(profile, model="gpt-5.6-luna")   # change a knob for one run
 result = run("What does this project do?", profile, cwd="/path/to/project")
 ```
@@ -111,24 +119,24 @@ A name resolves to the first `NAME.toml` found in, in order:
 2. the machine folder, `$XDG_CONFIG_HOME/callva-harness-runner/profiles`, or `~/.config/callva-harness-runner/profiles` when `XDG_CONFIG_HOME` is unset;
 3. the profiles shipped inside the package.
 
-The file found is used whole: no merging and no inheritance. A found file without a table for the requested harness is an error naming the file and the harness, and the search does not go on to a later source. A name is one file-name segment of letters, digits, `.`, `-` and `_`, not starting with `.`; anything else is refused.
+The file found is used whole, with the harness it names: no merging and no inheritance. A found file that cannot be read as a profile is an error naming the file, and the search does not go on to a later source. A name is one file-name segment of letters, digits, `.`, `-` and `_`, not starting with `.`; anything else is refused.
 
-- `find_profile(name, harness, folders=(), *, environ=None) -> Profile`
-- `find_profile_file(name, folders=(), *, environ=None) -> ProfileFile`: the file itself (`name`, `source`, `path`, `text`, `shadows`), with `.harnesses()` and `.profile(harness)`.
-- `list_profiles(folders=(), *, environ=None) -> list[ProfileListing]`: every visible profile with its `name`, `source` (`folder`, `machine` or `shipped`), `path`, `harnesses`, the same-named files it `shadows`, and an `error` when the file cannot be read as a profile file.
+- `find_profile(name, folders=(), *, environ=None) -> Profile`. It takes no harness: a harness passed to it, as a positional string or as `harness=`, is refused with a `TypeError` naming the call that replaces it, and a single folder string instead of a list is refused rather than searched.
+- `find_profile_file(name, folders=(), *, environ=None) -> ProfileFile`: the file itself (`name`, `source`, `path`, `text`, `shadows`), with `.harness`, `.knobs()` and `.profile()`.
+- `list_profiles(folders=(), *, environ=None) -> list[ProfileListing]`: every visible profile with its `name`, `source` (`folder`, `machine` or `shipped`), `path`, `harness`, the same-named files it `shadows`, and an `error` when the file cannot be read as a profile file (its `harness` is then `None`).
 - `machine_folder(environ=None) -> Path`
 
-`ProfileNotFound`, a `ProfileError`, means no source has the name.
+`ProfileNotFound`, a `ProfileError`, means no source has the name. For `read`, `act` and `read-sandboxed` its message names the harness-prefixed profiles that replace them.
 
-From a shell, `python -m callva.harness_runner profiles` prints the listing as JSON, and `python -m callva.harness_runner profiles show NAME` prints the file a lookup resolves to, after a comment line naming its source and path. Both take `--folder DIR`, once per folder, in search order.
+From a shell, `python -m callva.harness_runner profiles` prints the listing as JSON, and `python -m callva.harness_runner profiles show NAME` prints the file a lookup resolves to, after a comment line naming its source and path and one naming its harness. Both take `--folder DIR`, once per folder, in search order.
 
 ### Shipped profiles
 
-All three run `claude-opus-5-5` and `gpt-6-sol` at effort `medium` with a one-hour deadline. Print one with `profiles show NAME`.
+The claude profiles run `claude-opus-5-5` and the codex profiles `gpt-6-sol`, all at effort `medium` with a one-hour deadline. Print one with `profiles show NAME`.
 
-- `read`: a research question held to reading by instruction alone. Every tool and a full shell (claude `bypassPermissions`, codex `danger-full-access`), the target's project and local settings on claude, a read-only instruction appended to the system prompt, and `CAPABILITIES_READ_ONLY=1`.
-- `act`: a task with full access (claude `bypassPermissions`, codex `danger-full-access`, approvals never).
-- `read-sandboxed`: the same read, enforced by the operating system. The run's working directory cannot be written; the network, `~/.cache` and the temporary directory stay writable. On claude, Claude Code's seatbelt sandbox with `ask: ["Bash"]`, the write tools disallowed, no MCP servers, `disableAllHooks`, and the permission rule `Edit(./**)`, which Claude Code resolves against the working directory and merges into the sandbox's write denials; a `denyWrite` path would resolve against the settings root instead, not the run's directory. On codex, a named permissions profile extending `:read-only` with `~/.cache` and `:tmpdir` writable and the network on. The same read-only instruction and `CAPABILITIES_READ_ONLY=1`. On claude, read-sandboxed does not run the target's hooks, because a hook runs outside the sandbox and could write the target: context a hook would build, such as a ContextKit SessionStart build, is read as it already is on disk. CLAUDE.md and the project's rules still load. The plain `read` profile does run the target's hooks.
+- `claude-read`, `codex-read`: a research question held to reading by instruction alone. Every tool and a full shell (claude `bypassPermissions`, codex `danger-full-access`), the target's project and local settings on claude, a read-only instruction appended to the system prompt, and `CAPABILITIES_READ_ONLY=1`.
+- `claude-act`, `codex-act`: a task with full access (claude `bypassPermissions`, codex `danger-full-access`, approvals never).
+- `claude-read-sandboxed`, `codex-read-sandboxed`: the same read, enforced by the operating system. The run's working directory cannot be written; the network, `~/.cache` and the temporary directory stay writable. `claude-read-sandboxed` runs Claude Code's seatbelt sandbox with `ask: ["Bash"]`, the write tools disallowed, no MCP servers, `disableAllHooks`, and the permission rule `Edit(./**)`, which Claude Code resolves against the working directory and merges into the sandbox's write denials; a `denyWrite` path would resolve against the settings root instead, not the run's directory. `codex-read-sandboxed` runs a named permissions profile extending `:read-only` with `~/.cache` and `:tmpdir` writable and the network on. Both carry the same read-only instruction and `CAPABILITIES_READ_ONLY=1`. `claude-read-sandboxed` does not run the target's hooks, because a hook runs outside the sandbox and could write the target: context a hook would build, such as a ContextKit SessionStart build, is read as it already is on disk. CLAUDE.md and the project's rules still load. `claude-read` does run the target's hooks.
 
 ### Environment
 
@@ -178,9 +186,18 @@ The launcher makes the harness a session leader. When the deadline passes, or `c
 
 ## Changelog
 
+### 0.5.0
+
+A profile is one harness, so a caller names a profile and never a harness. What a 0.4.0 consumer must change:
+
+- A profile file is flat: `harness = "claude"` or `"codex"` at the top and that harness's knobs beside it. A file with `[claude]` or `[codex]` tables is refused; split it into one file per harness, moving each table's knobs to the top of its file.
+- `find_profile(name, harness, folders)` becomes `find_profile(name, folders)`; the name picks the harness. A harness passed to it is refused with a message naming the replacement call.
+- `ProfileFile.profile(harness)` becomes `ProfileFile.profile()`, `ProfileFile.harnesses()` becomes `ProfileFile.harness`, `ProfileFile.tables()` becomes `ProfileFile.knobs()`, and `ProfileListing.harnesses` becomes `ProfileListing.harness`, which the `profiles` listing prints as `harness`.
+- The shipped `read`, `act` and `read-sandboxed` are split into `claude-read`, `codex-read`, `claude-act`, `codex-act`, `claude-read-sandboxed` and `codex-read-sandboxed`, each with exactly the knobs of the matching table; asking for an old name finds nothing and the message names the new ones.
+
 ### 0.4.0
 
-Profiles by name: profile files (one table per harness), `find_profile`, `find_profile_file`, `list_profiles`, `machine_folder`, the `profiles` command, and three shipped profiles, `read`, `act` and `read-sandboxed`. Additive: everything in 0.3.0 works unchanged.
+Profiles by name: profile files, `find_profile`, `find_profile_file`, `list_profiles`, `machine_folder`, the `profiles` command, and three shipped profiles, `read`, `act` and `read-sandboxed`. Additive: everything in 0.3.0 works unchanged.
 
 ### 0.3.0
 

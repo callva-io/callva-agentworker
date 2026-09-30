@@ -1,11 +1,12 @@
 """`python -m callva.harness_runner profiles [show NAME] [--folder DIR ...]`
 
 `profiles` prints, as JSON, every profile discovery can reach: its name, the
-source it comes from, its path, the harness tables it defines, and the
-same-named files it shadows. `profiles show NAME` prints the file a lookup of
-NAME resolves to, exactly as it is, after a comment line naming its source and
-path. `--folder` adds a search folder ahead of the machine folder and the
-shipped profiles; give it once per folder, in search order.
+source it comes from, its path, its harness, and the same-named files it
+shadows. `profiles show NAME` prints the file a lookup of NAME resolves to,
+exactly as it is, after a comment line naming its source and path and a comment
+line naming its harness (or why the file cannot be read as a profile).
+`--folder` adds a search folder ahead of the machine folder and the shipped
+profiles; give it once per folder, in search order.
 """
 
 from __future__ import annotations
@@ -36,7 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.action == "show":
             found = find_profile_file(args.name, folders)
-            sys.stdout.write(f"# {found.source}: {found.path}\n{found.text}")
+            try:
+                about = f"harness: {found.harness}"
+            except ProfileError as refused:
+                about = f"error: {refused}"
+            sys.stdout.write(f"# {found.source}: {found.path}\n# {about}\n{found.text}")
             if not found.text.endswith("\n"):
                 sys.stdout.write("\n")
             return 0
